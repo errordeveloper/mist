@@ -1,0 +1,18 @@
+#!/bin/sh
+
+# Run this script as root ("sudo ./setup-nat-ubuntu").
+# It has been tested on Ubuntu 8.04, for a tun interface on 172.16.x.x
+
+iptables -t nat -A POSTROUTING -o eth0 -s 172.16.0.0/24 -j MASQUERADE
+iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 3074 -j DNAT --to-destination 172.16.0.2
+iptables -t nat -A PREROUTING -i eth0 -p udp -m multiport --dports 88,3074 -j DNAT --to-destination 172.16.0.2
+iptables -A FORWARD -i eth0 -d 172.16.0.2 -p tcp --dport 3074 -j ACCEPT
+iptables -A FORWARD -i eth0 -d 172.16.0.2 -p udp -m multiport --dports 88,3074 -j ACCEPT
+
+/sbin/sysctl -w net.ipv4.ip_forward=1
+echo 1 > /proc/sys/net/ipv4/ip_forward
+
+# Avoid Ubuntu Hardy sysctl bug
+#  https://bugs.launchpad.net/ubuntu/+source/procps/+bug/84537
+(cat /etc/sysctl.conf | grep -e "^net.ipv4.ip_forward=1$") || \
+echo "Warning: make sure 'net.ipv4.ip_forward=1' is available in /etc/sysctl.conf"

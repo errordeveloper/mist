@@ -1,0 +1,13 @@
+
+ECONOTAGDIR=$(MIST)/contiki/platform/econotag
+
+CONTIKI_TARGET_SOURCEFILES+=leds-arch.c enc28j60-arch.c 
+
+include $(ECONOTAGDIR)/Makefile.econotag
+
+PLATFORMAPPS += enc28j60 
+
+vpath %.c $(ECONOTAGDIR)
+vpath %.h $(ECONOTAGDIR)
+vpath %.S $(ECONOTAGDIR)
+CFLAGS += -I $(ECONOTAGDIR) -DPLATFORM_CONF=\"platform-conf.h\"

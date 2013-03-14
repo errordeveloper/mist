@@ -1,0 +1,4 @@
+echo-tcp_src = echo-tcp.c
+
+APPS += tcp-socket
+include $(MIST)/apps/tcp-socket/Makefile.tcp-socket

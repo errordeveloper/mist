@@ -1,0 +1,14 @@
+COOJAPLATFORMDIR=$(MIST)/contiki/platform/cooja
+
+include $(COOJAPLATFORMDIR)/Makefile.cooja
+
+vpath %.c $(COOJAPLATFORMDIR) $(COOJAPLATFORMDIR)/dev \
+          $(COOJAPLATFORMDIR)/net $(COOJAPLATFORMDIR)/lib \
+          $(COOJAPLATFORMDIR)/sys $(COOJAPLATFORMDIR)/cfs
+CFLAGS += -I $(COOJAPLATFORMDIR)
+
+
+mtype%.o: contiki-cooja-main.o
+	-rm -rf obj_cooja
+	-ln -s obj_$(TARGET) obj_cooja
+	mv contiki-cooja-main.o $@

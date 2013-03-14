@@ -1,0 +1,20 @@
+CYGWIN_REGPATH = /proc/registry/HKEY_LOCAL_MACHINE/SYSTEM/ControlSet001/Enum/*/*/*/FriendlyName
+CYGWIN_CMD = find $(CYGWIN_REGPATH) -name FriendlyName -exec grep -a $(CYGWIN_DEV_ID) {} \;
+CYGWIN_COMPORT_FILTER = cut -f 2 -d "(" | cut -f 1 -d ")" | tr A-Z a-z
+CYGWIN_COMPORT = /dev/$(shell $(CYGWIN_CMD) | $(CYGWIN_COMPORT_FILTER) | head -n 1)
+
+ifndef COMPORT
+COMPORT = $(CYGWIN_COMPORT)
+endif
+
+motelist:
+	@$(CYGWIN_CMD)
+	@echo Default COM port: $(CYGWIN_COMPORT)
+	@echo Selected COM port: $(COMPORT)
+
+motelist-debug:
+	@echo Searching for $(CYGWIN_DEV_ID)...
+	@echo Searching in $(CYGWIN_REGPATH)
+	@$(CYGWIN_CMD)
+	@echo Default COM port: $(CYGWIN_COMPORT)
+	@echo Selected COM port: $(COMPORT)

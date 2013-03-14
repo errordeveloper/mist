@@ -1,0 +1,917 @@
+/*
+ * Copyright (c) 2012, Thingsquare, http://www.thingsquare.com/.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE
+ * COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
+
+#include "contiki.h"
+#include "net/packetbuf.h"
+#include "net/queuebuf.h"
+#include "net/netstack.h"
+#include "net/rime/rimeaddr.h"
+#include <string.h>
+#include <stdio.h>
+#include "lib/random.h"
+
+extern const struct rdc_driver drowsie_driver;
+
+#if CONTIKI_TARGET_EXP1120
+#include "cc11xx.h" /* XXX */
+#elif CONTIKI_TARGET_EXP1101
+#include "cc1101.h" /* XXX */
+#else
+#include "dev/cc2420.h" /* XXX */
+#endif /* CONTIKI_TARGET_EXP1120 */
+
+#if UIP_CONF_IPV6_RPL
+#define WITH_RPL_AUTHORITY 1
+#endif
+
+#ifndef WITH_RPL_AUTHORITY
+#define WITH_RPL_AUTHORITY 0 /* Max authority iff RPL root */
+#endif
+#if WITH_RPL_AUTHORITY
+#include "net/rpl/rpl.h"
+#include "net/rpl/rpl-private.h"
+#else /* WITH_RPL_AUTHORITY */
+#include "node-id.h" /* Max authority iff node_id == 1 */
+#endif /* WITH_RPL_AUTHORITY */
+
+#define PUSH_BASE_PERIOD (16 * CLOCK_SECOND) /* The base timer for the
+					       authority push. */
+static uint8_t push_num_pushed;
+#define PUSH_MAX_NUM    4                   /* The maximum number of
+					       authority pushes to
+					       perform. */
+
+#define AUTH_AGE_PERIOD (20 * CLOCK_SECOND) /* Automatically weaken authority */
+#define AUTH_BEST 0 /* Best authority (RPL root) */
+#define AUTH_WORST 70 /* Worst authority possible before AUTH_NONE */
+#define AUTH_NONE 0xff
+#define AUTH_GRANULARITY 2 /* My authority is my neighbor's authority + AUTH_GRANULARITY */
+#define AUTH_MAX_AGE 30 /* Number of AUTH_AGE_PERIOD before authority is removed */
+static uint8_t my_auth; /* My timesynch authority */
+static uint8_t my_auth_age; /* My timesynch authority age */
+static struct timer timer_ageauth; /* Age authority timer */
+
+static int forced_auth = 0; /* Flag used to force best authority (even if not RPL root). For debugging purposes only. */
+
+#define NR_CHANNELS 50 /* Total number of channels */
+#ifdef MULTICHAN_CONF_CHANNEL_PERIOD
+#define CHANNEL_PERIOD MULTICHAN_CONF_CHANNEL_PERIOD
+#else /* MULTICHAN_CONF_CHANNEL_PERIOD */
+#define CHANNEL_PERIOD (4 * CLOCK_SECOND) /* Duration on each channel */
+#endif /* MULTICHAN_CONF_CHANNEL_PERIOD */
+#define TIME_TABLE_GRANULARITY 16 /* Time increases per channel */
+#define INCREMENT_TIME_PERIOD (CHANNEL_PERIOD / TIME_TABLE_GRANULARITY)
+#define TIME_WRAP (NR_CHANNELS * TIME_TABLE_GRANULARITY) /* Restart time */
+static uint16_t my_time; /* Current time, decides which radio channel to use */
+static uint8_t my_channel = -1; /* Current channel */
+static int my_channel_idx = -1; /* Current channel index */
+static uint8_t time_channel_table[NR_CHANNELS];
+
+#define BLINK_ON_EVEN_CHANNELS 1
+#if BLINK_ON_EVEN_CHANNELS
+#include "dev/leds.h"
+#endif /* BLINK_ON_EVEN_CHANNELS */
+
+#define LOG_CHANNEL_ACTIVITY 1
+#if LOG_CHANNEL_ACTIVITY
+static int log_channel_tx[NR_CHANNELS];
+static int log_channel_noack[NR_CHANNELS];
+static int log_channel_rx[NR_CHANNELS];
+static signed char log_channel_rssi[NR_CHANNELS];
+#endif /* LOG_CHANNEL_ACTIVITY */
+
+#define SCAN_DELAY (20*CLOCK_SECOND) /* Delay from AUTH_NONE until scan begins */
+#define SCAN_RESPONSE_DELAY (CLOCK_SECOND/32) /* Rapidly scan all channels */
+static struct timer timer_scan; /* Scan channels timer */
+
+static struct timer timer_push; /* Authority push timer */
+
+PROCESS(channel_process_2, "Channel hopper");
+PROCESS(send_reply_process_2, "Synch reply");
+static int send_reply = 0;
+static int already_received_reply = 0;
+
+static void send_scan_reply(void);
+
+#ifdef MULTICHAN_CONF_SET_CHANNEL
+#define SET_CHANNEL(x) MULTICHAN_CONF_SET_CHANNEL(x)
+#define READ_RSSI(x) MULTICHAN_CONF_READ_RSSI(x)
+#else /* MULTICHAN_CONF_SET_CHANNEL */
+
+#if CONTIKI_TARGET_COOJA
+
+#define SET_CHANNEL(x) radio_set_channel(x)
+#define READ_RSSI(x) 0 /* not implemented */
+
+#elif CONTIKI_TARGET_EXP1120
+
+signed char cc11xx_read_rssi(void);
+void cc11xx_channel_set(uint8_t c);
+#define SET_CHANNEL(x) cc11xx_channel_set(x)
+#define READ_RSSI(x) cc11xx_read_rssi()
+
+#elif CONTIKI_TARGET_EXP1101
+
+#define SET_CHANNEL(x) cc1101_channel_set(x)
+#define READ_RSSI(x) 0 /* not implemented */
+
+#else
+
+#define SET_CHANNEL(x) cc2420_set_channel(x)
+#define READ_RSSI(x) 0 /* not implemented */
+
+#endif /* CONTIKI_TARGET_COOJA */
+
+#endif /* MULTICHAN_CONF_SET_CHANNEL */
+
+#define PKT_NORMAL 252
+#define PKT_SCAN_PROBE 253
+#define PKT_SCAN_REPLY 254
+
+#define WITH_HEADER 1
+#if WITH_HEADER
+struct hdr {
+  uint8_t type;
+  uint8_t auth;
+  uint8_t time[2];
+};
+#endif /* WITH_HEADER */
+
+struct pkt_scan {
+  uint8_t type;
+  uint8_t percent;
+};
+struct pkt_scan_reply {
+  uint8_t type;
+  uint8_t auth;
+  uint8_t time[2];
+};
+
+static void
+send_packet_chan(mac_callback_t sent, void* ptr);
+
+#define DEBUG 0
+#if DEBUG
+#include <stdio.h>
+#define PRINTF(...) printf(__VA_ARGS__)
+#else
+#define PRINTF(...)
+#endif
+#define PRINTF_FULL(...)
+
+#define WITH_SEND_TWO_CHANNELS 1
+#if WITH_SEND_TWO_CHANNELS
+#define SEND_TWO_CHANNELS_THRESHOLD (3*INCREMENT_TIME_PERIOD)
+static clock_time_t time_last_channel_change;
+static clock_time_t time_next_channel_change;
+static int last_channel = -1;
+static int next_channel = -1;
+#endif /* WITH_SEND_TWO_CHANNELS */
+
+#define WITH_STATS 1
+#define PRINT_STATS 1
+#define PRINT_STATS_PERIOD (60*CLOCK_SECOND)
+#if WITH_STATS
+static struct timer timer_stats;
+static int pkts_tx = 0;
+static int pkts_tx_acked = 0;
+static int pkts_rx = 0;
+static int dup_last = 0;
+static int dup_none = 0;
+static int dup_next = 0;
+static int scans_short = 0;
+static int scans_full = 0;
+static int scan_success = 0;
+#endif /* WITH_STATS */
+
+#define DEBUG_COOJA 0
+#if DEBUG_COOJA
+static int debug_cooja_last_auth = -1;
+#endif /* DEBUG_COOJA */
+
+/*---------------------------------------------------------------------------*/
+static void
+packet_sent(void *ptr, int status, int num_transmissions)
+{
+  /* We just sent a request or a probe */
+}
+/*---------------------------------------------------------------------------*/
+static void
+send_packet(mac_callback_t sent, void *ptr)
+{
+#if WITH_HEADER
+  struct hdr *chdr;
+#endif /* WITH_HEADER */
+
+  if(my_auth == AUTH_NONE) {
+    /* We are not synchronized */
+    mac_call_sent_callback(sent, ptr, MAC_TX_ERR, 1);
+    return;
+  }
+
+#if WITH_HEADER
+  if(packetbuf_hdralloc(sizeof(struct hdr)) == 0) {
+    /* Failed to allocate space for multichan header */
+    PRINTF("multichan: send failed 1, too large header\n");
+    mac_call_sent_callback(sent, ptr, MAC_TX_ERR_FATAL, 1);
+    return;
+  }
+  chdr = packetbuf_hdrptr();
+  chdr->type = PKT_NORMAL;
+  chdr->auth = my_auth;
+  chdr->time[0] = my_time >> 8;
+  chdr->time[1] = my_time & 0xff;
+  /*  w_memcpy((unsigned char*)&chdr->time, (unsigned char*)&my_time,
+      sizeof(my_time));*/
+#endif /* WITH_HEADER */
+
+#if WITH_SEND_TWO_CHANNELS
+  /* Check if we recently changed channels, or soon will.
+   * If so, we send the message on both channels! */
+  if(clock_time() - time_last_channel_change < SEND_TWO_CHANNELS_THRESHOLD
+      && last_channel >= 0) {
+    struct queuebuf *packet;
+
+    /* XXX We should wrap the callback here, to avoid always sending the packet twice
+     * and to avoid returning wrong info to upper-layers (which in turn may cause
+     * unnecessary retransmissions) */
+
+    packet = queuebuf_new_from_packetbuf();
+    SET_CHANNEL(last_channel);
+    send_packet_chan(NULL, NULL); /* last_channel */
+
+    if(packet != NULL) {
+      queuebuf_to_packetbuf(packet);
+      queuebuf_free(packet);
+      SET_CHANNEL(my_channel);
+      send_packet_chan(sent, ptr);  /* my_channel */
+    }
+
+    PRINTF("Duplicated tx on previous channel\n");
+#if WITH_STATS
+    dup_last++;
+#endif /* WITH_STATS */
+  } else if((clock_time() > time_next_channel_change
+      || time_next_channel_change - clock_time() < SEND_TWO_CHANNELS_THRESHOLD)
+      && next_channel >= 0) {
+    struct queuebuf *packet;
+
+    /* XXX We should wrap the callback here, to avoid always sending the packet twice
+     * and to avoid returning wrong info to upper-layers (which in turn may cause
+     * unnecessary retransmissions) */
+
+    packet = queuebuf_new_from_packetbuf();
+    send_packet_chan(NULL, NULL); /* my_channel */
+
+    if(packet != NULL) {
+      queuebuf_to_packetbuf(packet);
+      queuebuf_free(packet);
+      SET_CHANNEL(next_channel);
+      send_packet_chan(sent, ptr); /* next_channel */
+      SET_CHANNEL(my_channel);
+    }
+
+    PRINTF("Duplicated tx on next channel\n");
+#if WITH_STATS
+    dup_next++;
+#endif /* WITH_STATS */
+  } else {
+    send_packet_chan(sent, ptr);
+#if WITH_STATS
+    dup_none++;
+#endif /* WITH_STATS */
+  }
+
+#else /* WITH_SEND_TWO_CHANNELS */
+  send_packet_chan(sent, ptr);
+#endif /* WITH_SEND_TWO_CHANNELS */
+}
+/*---------------------------------------------------------------------------*/
+static void
+send_packet_chan(mac_callback_t sent, void* ptr)
+{
+#if LOG_CHANNEL_ACTIVITY
+  log_channel_tx[my_channel_idx]++;
+#endif /* LOG_CHANNEL_ACTIVITY */
+
+  /* Send a packet from the Rime buffer */
+  drowsie_driver.send(sent, ptr);
+}
+/*---------------------------------------------------------------------------*/
+static void
+send_list(mac_callback_t sent, void *ptr, struct rdc_buf_list *buf_list)
+{
+  while(buf_list != NULL) {
+    queuebuf_to_packetbuf(buf_list->buf);
+    send_packet(sent, ptr);
+    buf_list = buf_list->next;
+  }
+}
+/*---------------------------------------------------------------------------*/
+static void
+handle_new_time(uint8_t auth, unsigned char* time_ptr)
+{
+  if(auth != AUTH_NONE &&
+     (my_auth == AUTH_NONE || auth + AUTH_GRANULARITY < my_auth)) {
+    timer_set(&timer_ageauth, AUTH_AGE_PERIOD); /* reset age timeout */
+
+    if(my_auth == AUTH_NONE) {
+      printf("multichan: Auth improved from NONE to %d\n",
+             auth + AUTH_GRANULARITY);
+    }
+    my_auth = auth + AUTH_GRANULARITY;
+
+#if DEBUG_COOJA
+    if(debug_cooja_last_auth != my_auth) {
+      printf("#A a=%d 1\n", my_auth);
+      debug_cooja_last_auth = my_auth;
+    }
+#endif /* DEBUG_COOJA */
+
+    my_auth_age = 0;
+    w_memcpy(&my_time, time_ptr, sizeof(my_time));
+    PRINTF("Authority inherited %u, time %u\n", my_auth, my_time);
+
+#if DEBUG_COOJA
+    if(debug_cooja_last_auth != my_auth) {
+      printf("#A a=%d 2\n", my_auth);
+      debug_cooja_last_auth = my_auth;
+    }
+#endif /* DEBUG_COOJA */
+
+    if(my_auth >= AUTH_WORST) {
+      PRINTF("Authority is already bad\n");
+      my_auth = AUTH_NONE;
+#if DEBUG_COOJA
+      if(debug_cooja_last_auth != my_auth) {
+        printf("#A a=%d 3\n", my_auth);
+        debug_cooja_last_auth = my_auth;
+      }
+#endif /* DEBUG_COOJA */
+      timer_set(&timer_scan, SCAN_DELAY);
+    }
+  } else {
+    PRINTF_FULL("Authority not inherited %u + %u !< %u, time %u\n", auth,
+           AUTH_GRANULARITY, my_auth, my_time);
+  }
+}
+/*---------------------------------------------------------------------------*/
+static void
+send_scan_probe(int percent)
+{
+  struct pkt_scan pkt;
+
+  /* Prepare scan probe */
+  packetbuf_clear();
+  pkt.type = PKT_SCAN_PROBE;
+  pkt.percent = percent;
+  packetbuf_copyfrom(&pkt, sizeof(struct pkt_scan));
+  packetbuf_set_datalen(sizeof(struct pkt_scan));
+
+  PRINTF_FULL("Send scan probe\n");
+  drowsie_driver.send(packet_sent, NULL);
+}
+/*---------------------------------------------------------------------------*/
+static void
+send_scan_reply(void)
+{
+  struct pkt_scan_reply pkt;
+
+  if(my_auth == AUTH_NONE) {
+    PRINTF_FULL("No auth., no scan reply\n");
+    return;
+  }
+
+  /* Prepare scan probe */
+  packetbuf_clear();
+  pkt.type = PKT_SCAN_REPLY;
+  pkt.auth = my_auth;
+  /*  w_memcpy(&pkt.time, &my_time, sizeof(my_time));*/
+  pkt.time[0] = my_time >> 8;
+  pkt.time[1] = my_time & 0xff;
+  packetbuf_copyfrom(&pkt, sizeof(struct pkt_scan_reply));
+  packetbuf_set_datalen(sizeof(struct pkt_scan_reply));
+
+  PRINTF_FULL("Send scan reply\n");
+  drowsie_driver.send(packet_sent, NULL);
+}
+/*---------------------------------------------------------------------------*/
+static void
+packet_input(void)
+{
+  /* As the main RDC driver, we will be called from the radio driver.
+   * But packet is for drowsie! Drowsie will in turn give us the packet by
+   * drowsie_multichannel_input() */
+  drowsie_driver.input();
+}
+/*---------------------------------------------------------------------------*/
+void
+drowsie_multichannel_input(void)
+{
+  if(packetbuf_datalen() <= 0 || packetbuf_totlen() <= 0) {
+    return;
+  }
+
+  if(1) {
+#if WITH_HEADER
+    struct hdr *chdr;
+    struct pkt_scan *pkt_scan;
+    struct pkt_scan_reply *pkt_scan_reply;
+    pkt_scan = packetbuf_dataptr();
+    pkt_scan_reply = packetbuf_dataptr();
+
+    /* Parse scan packets */
+    if(packetbuf_datalen() == sizeof(struct pkt_scan)
+        && pkt_scan->type == PKT_SCAN_PROBE) {
+      int r;
+      if(my_auth == AUTH_NONE) {
+        PRINTF_FULL("No auth., no scan reply\n");
+        return;
+      }
+      r = random_rand()%100;
+      if(r > pkt_scan->percent) {
+        PRINTF_FULL("Avoiding congestion, no scan reply (%u>%u)\n", r, pkt_scan->percent);
+        return;
+      }
+      /*send_scan_reply();*/
+      send_reply = 1;
+      process_poll(&send_reply_process_2);
+      return;
+    }
+    if(packetbuf_datalen() == sizeof(struct pkt_scan_reply)
+        && pkt_scan_reply->type == PKT_SCAN_REPLY) {
+      uint16_t time;
+      already_received_reply = 1;
+      time = (pkt_scan_reply->time[0] << 8) +
+        pkt_scan_reply->time[1];
+      handle_new_time(pkt_scan_reply->auth,
+                      (unsigned char *)&time);
+      return;
+    }
+
+    /* Strip multichan protocol header */
+    chdr = packetbuf_dataptr();
+    if(chdr->type == PKT_NORMAL) {
+      uint16_t time;
+      time = (chdr->time[0] << 8) + chdr->time[1];
+      handle_new_time(chdr->auth, (unsigned char *)&time);
+      packetbuf_hdrreduce(sizeof(struct hdr));
+    }
+#endif /* WITH_HEADER */
+
+#if LOG_CHANNEL_ACTIVITY
+    log_channel_rx[my_channel_idx]++;
+#endif /* LOG_CHANNEL_ACTIVITY */
+
+#if WITH_STATS
+    pkts_rx++;
+#endif /* WITH_STATS */
+
+    NETSTACK_MAC.input();
+  }
+}
+/*---------------------------------------------------------------------------*/
+static int
+on(void)
+{
+  return drowsie_driver.on();
+}
+/*---------------------------------------------------------------------------*/
+static int
+off(int keep_radio_on)
+{
+  return drowsie_driver.off(keep_radio_on);
+}
+/*---------------------------------------------------------------------------*/
+static unsigned short
+channel_check_interval(void)
+{
+  return drowsie_driver.channel_check_interval();
+}
+/*---------------------------------------------------------------------------*/
+void
+drowsie_multichannel_force_auth(int become_auth)
+{
+  forced_auth = become_auth;
+}
+/*---------------------------------------------------------------------------*/
+/* This function pushes a node's authority to its neighbors, but only
+   if the node has AUTH_BEST authority. This is used as part of the
+   startup procedure of a root node, and is also done at regular and
+   increasing intervals. */
+PROCESS(push_auth_to_network_process_2, "Multichan auth push process");
+PROCESS_THREAD(push_auth_to_network_process_2, ev, data)
+{
+  PROCESS_BEGIN();
+  /* Push our authority over all channels */
+  if(my_auth == AUTH_BEST) {
+    static int scan_channel;
+    static int offset;
+
+    scan_channel = 0;
+    offset = random_rand() % NR_CHANNELS;
+
+    while(scan_channel < NR_CHANNELS) {
+
+      SET_CHANNEL(time_channel_table[(scan_channel + offset) % NR_CHANNELS]);
+#if BLINK_ON_EVEN_CHANNELS
+      leds_toggle(LEDS_ALL);
+#endif /* BLINK_ON_EVEN_CHANNELS */
+
+      PRINTF_FULL("multichan: Sending auth push at channel [%u] %u\n", scan_channel,
+		  time_channel_table[scan_channel]);
+
+      /* Send scan reply to push our authority to all that hears. */
+      send_scan_reply();
+
+      scan_channel++;
+
+      PROCESS_PAUSE();
+    }
+  }
+  PROCESS_END();
+}
+/*---------------------------------------------------------------------------*/
+static void
+push_auth_to_network(void)
+{
+  process_start(&push_auth_to_network_process_2, NULL);
+}
+/*---------------------------------------------------------------------------*/
+PROCESS_THREAD(channel_process_2, ev, data)
+{
+  static struct etimer et;
+  static struct etimer et2;
+  int ch;
+
+  PROCESS_BEGIN();
+
+  timer_set(&timer_ageauth, AUTH_AGE_PERIOD);
+  if(my_auth == AUTH_NONE) {
+    timer_set(&timer_scan, SCAN_DELAY);
+  }
+
+#if PRINT_STATS
+  timer_set(&timer_stats, PRINT_STATS_PERIOD);
+#endif /* PRINT_STATS */
+
+  etimer_set(&et, INCREMENT_TIME_PERIOD);
+  PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+
+  while(1) {
+
+#if PRINT_STATS
+    if(timer_expired(&timer_stats)) {
+      int i;
+      timer_set(&timer_stats, PRINT_STATS_PERIOD);
+      printf("STATS: pkts ack/tx %u/%u, rx %u\n", pkts_tx_acked, pkts_tx, pkts_rx);
+      printf("STATS: dups early %u none %u late %u\n", dup_last, dup_none, dup_next);
+      printf("STATS: scans short %u full %u success %u\n", scans_short, scans_full, scan_success);
+#if LOG_CHANNEL_ACTIVITY
+      printf("STATS: tx/ch: ");
+      for(i = 0; i < NR_CHANNELS; i++) {
+        printf("%d ", log_channel_tx[i]);
+      }
+      printf("\n");
+      printf("STATS: noack/ch: ");
+      for(i = 0; i < NR_CHANNELS; i++) {
+        printf("%d ", log_channel_noack[i]);
+      }
+      printf("\n");
+      printf("STATS: rx/ch: ");
+      for(i = 0; i < NR_CHANNELS; i++) {
+        printf("%d ", log_channel_rx[i]);
+      }
+      printf("\n");
+      printf("STATS: last rssi/ch: ");
+      for(i = 0; i < NR_CHANNELS; i++) {
+        printf("%d ", log_channel_rssi[i]);
+      }
+      printf("\n");
+#endif /* LOG_CHANNEL_ACTIVITY */
+    }
+#endif /* PRINT_STATS */
+
+
+    if(timer_expired(&timer_push)) {
+      int multiplication_factor;
+
+      multiplication_factor = 1 << push_num_pushed;
+      timer_set(&timer_push, PUSH_BASE_PERIOD * multiplication_factor);
+      if(push_num_pushed < PUSH_MAX_NUM) {
+        push_auth_to_network();
+        push_num_pushed++;
+      }
+    }
+
+    /* Age authority */
+    if(timer_expired(&timer_ageauth)) {
+      timer_set(&timer_ageauth, AUTH_AGE_PERIOD);
+      if(my_auth != AUTH_NONE) {
+        my_auth++;
+        my_auth_age++;
+#if DEBUG_COOJA
+        if(debug_cooja_last_auth != my_auth) {
+          printf("#A a=%d 4\n", my_auth);
+          debug_cooja_last_auth = my_auth;
+        }
+#endif /* DEBUG_COOJA */
+        PRINTF_FULL("Authority aged %u, %u\n", my_auth, my_auth_age);
+        if(my_auth >= AUTH_WORST) {
+          PRINTF("Authority timed out\n");
+          my_auth = AUTH_NONE;
+#if DEBUG_COOJA
+          if(debug_cooja_last_auth != my_auth) {
+            printf("#A a=%d 5\n", my_auth);
+            debug_cooja_last_auth = my_auth;
+          }
+#endif /* DEBUG_COOJA */
+          timer_set(&timer_scan, SCAN_DELAY);
+        } else if(my_auth_age >= AUTH_MAX_AGE) {
+          PRINTF("Authority died from old age\n");
+          my_auth = AUTH_NONE;
+#if DEBUG_COOJA
+          if(debug_cooja_last_auth != my_auth) {
+            printf("#A a=%d 6\n", my_auth);
+            debug_cooja_last_auth = my_auth;
+          }
+#endif /* DEBUG_COOJA */
+          timer_set(&timer_scan, SCAN_DELAY);
+        }
+      }
+    }
+
+    /* Start scanning all channels */
+    if(my_auth == AUTH_NONE && timer_expired(&timer_scan)) {
+      static int scan_channel;
+      static int offset;
+
+      /* First, probe our guessed channel, hoping it's still correct */
+      PRINTF("Probing our guessed channel\n");
+#if WITH_STATS
+      scans_short++;
+#endif /* WITH_STATS */
+
+      /* Send scan probe */
+      send_scan_probe(100);
+
+      /* Await response, or try to reduce congestion */
+      etimer_set(&et2, SCAN_RESPONSE_DELAY);
+      PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et2));
+
+      /* Send scan probe */
+      send_scan_probe(50);
+
+      /* Await response, or start scanning */
+      etimer_reset(&et2);
+      PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et2));
+      printf("multichan: Started scanning %d channels\n", NR_CHANNELS);
+      scan_channel = 0;
+      offset = random_rand()%NR_CHANNELS;
+#if WITH_STATS
+      if(my_auth == AUTH_NONE) {
+        scans_full++;
+      }
+#endif /* WITH_STATS */
+      while(my_auth == AUTH_NONE && scan_channel < NR_CHANNELS) {
+
+        SET_CHANNEL(time_channel_table[(scan_channel+offset)%NR_CHANNELS]);
+#if BLINK_ON_EVEN_CHANNELS
+        leds_toggle(LEDS_ALL);
+#endif /* BLINK_ON_EVEN_CHANNELS */
+
+        PRINTF_FULL("multichan: Sending scan probe at channel [%u] %u\n", scan_channel,
+               time_channel_table[scan_channel]);
+
+        /* Send scan probe */
+        send_scan_probe(100);
+
+        /* Await response, or try to reduce congestion */
+        etimer_reset(&et2);
+        PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et2));
+
+        /* Send scan probe */
+        send_scan_probe(50);
+
+        /* Await response, or try next channel */
+        etimer_reset(&et2);
+        PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et2));
+
+        scan_channel++;
+      }
+      if(my_auth != AUTH_NONE) {
+        printf("multichan: Finished scanning, have auth %d\n",
+               my_auth);
+      } else {
+        printf("multichan: Finished scanning, have no auth\n");
+      }
+
+      timer_set(&timer_scan, SCAN_DELAY); /* Repeat scan later if still not synchronized */
+
+      /* We restart the progress-time-timer, to avoid that the timer now rapidly fires to catch up */
+      etimer_set(&et, INCREMENT_TIME_PERIOD);
+
+#if WITH_STATS
+      if(my_auth != AUTH_NONE) {
+        scan_success++;
+      }
+#endif /* WITH_STATS */
+    }
+
+    /* Give us authority if we are the RPL root */
+#if WITH_RPL_AUTHORITY
+    {
+      rpl_dag_t *dag;
+      dag = rpl_get_any_dag();
+      if(dag != NULL) {
+        if(dag->rank == RPL_MIN_HOPRANKINC) {
+	  /*          printf("We are the RPL DAG root\n");*/
+          my_auth = AUTH_BEST;
+#if DEBUG_COOJA
+          if(debug_cooja_last_auth != my_auth) {
+            printf("#A a=%d 7\n", my_auth);
+            debug_cooja_last_auth = my_auth;
+          }
+#endif /* DEBUG_COOJA */
+        }
+      }
+    }
+#else /* WITH_RPL_AUTHORITY */
+    if(node_id == 1) {
+      my_auth = AUTH_BEST;
+#if DEBUG_COOJA
+      if(debug_cooja_last_auth != my_auth) {
+        printf("#A a=%d 8\n", my_auth);
+        debug_cooja_last_auth = my_auth;
+      }
+#endif /* DEBUG_COOJA */
+    }
+#endif /* WITH_RPL_AUTHORITY */
+    if(forced_auth) {
+      my_auth = AUTH_BEST;
+    }
+
+    /* Increase time, change channel */
+    my_time++;
+    if(my_time >= TIME_WRAP) {
+      my_time = 0;
+    }
+    ch = time_channel_table[my_time / TIME_TABLE_GRANULARITY];
+    my_channel_idx = my_time / TIME_TABLE_GRANULARITY;
+
+    if(ch != my_channel) {
+      PRINTF_FULL("change channel (t=%d) [%d]: channel %u\n", my_time, my_time / TIME_TABLE_GRANULARITY, ch);
+#if BLINK_ON_EVEN_CHANNELS
+    if ((my_channel_idx % 8) == 0) {
+      leds_toggle(LEDS_ALL);
+    }
+#endif /* BLINK_ON_EVEN_CHANNELS */
+#if LOG_CHANNEL_ACTIVITY
+    log_channel_rssi[my_channel_idx] = READ_RSSI();
+#endif /* LOG_CHANNEL_ACTIVITY */
+
+#if WITH_SEND_TWO_CHANNELS
+      time_last_channel_change = clock_time();
+      last_channel = my_channel;
+      time_next_channel_change =
+          clock_time() + TIME_TABLE_GRANULARITY * INCREMENT_TIME_PERIOD;
+      next_channel = time_channel_table[((my_time / TIME_TABLE_GRANULARITY) + 1)
+                                        % 50];
+#endif /* WITH_SEND_TWO_CHANNELS */
+
+      /* TODO XXX Check if we actually managed to change the channel */
+      /* XXX Or do this in the radio driver */
+      my_channel = ch;
+      SET_CHANNEL(ch);
+    }
+
+    if(etimer_expired(&et)) {
+      etimer_reset(&et);
+    }
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+  }
+
+  PROCESS_END();
+}
+/*---------------------------------------------------------------------------*/
+PROCESS_THREAD(send_reply_process_2, ev, data)
+{
+  static struct etimer et;
+
+  PROCESS_BEGIN();
+
+  while(1) {
+    PROCESS_WAIT_UNTIL(send_reply);
+    send_reply = 0;
+    already_received_reply = 0;
+
+#define BACKOFF_MAX_TIME (SCAN_RESPONSE_DELAY)
+    etimer_set(&et, 1+(random_rand()%BACKOFF_MAX_TIME));
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+
+    /* Suppress reply if we recently heard one */
+    if(!already_received_reply) {
+      send_scan_reply();
+      PRINTF("Sent reply\n");
+    } else {
+      PRINTF("Suppressing reply\n");
+    }
+  }
+
+  PROCESS_END();
+}
+/*---------------------------------------------------------------------------*/
+void
+drowsie_multichannel_set_channel_list(uint8_t* chans, int len)
+{
+  int t;
+  /* Populate channel table incrementally */
+  for(t = 0; t < NR_CHANNELS; t++) {
+    printf("Time %d: channel %d\n", t, chans[t%len]);
+    time_channel_table[t] = chans[t%len];
+  }
+
+}
+/*---------------------------------------------------------------------------*/
+static void
+init(void)
+{
+  int t;
+  static int inited = 0;
+  if(inited) {
+    return;
+  }
+  inited = 1;
+
+  my_time = 0;
+  my_auth = AUTH_NONE;
+#if DEBUG_COOJA
+  if(debug_cooja_last_auth != my_auth) {
+    printf("#A a=%d 9\n", my_auth);
+    debug_cooja_last_auth = my_auth;
+  }
+#endif /* DEBUG_COOJA */
+
+#if LOG_CHANNEL_ACTIVITY
+  for(t = 0; t < NR_CHANNELS; t++) {
+    log_channel_tx[t] = 0;
+    log_channel_noack[t] = 0;
+    log_channel_rx[t] = 0;
+    log_channel_rssi[t] = 0;
+  }
+#endif /* LOG_CHANNEL_ACTIVITY */
+
+  /* Populate channel table incrementally.
+   * This list should be configured with multichan_set_channel_list() */
+  for(t = 0; t < NR_CHANNELS; t++) {
+    time_channel_table[t] = t;
+  }
+
+  process_start(&channel_process_2, NULL);
+  process_start(&send_reply_process_2, NULL);
+
+  drowsie_driver.init();
+
+  on();
+}
+/*---------------------------------------------------------------------------*/
+const struct rdc_driver drowsie_multichannel_driver = {
+    "drowsie multichannel",
+    init,
+    send_packet,
+    send_list,
+    packet_input,
+    on,
+    off,
+    channel_check_interval,
+};
+/*---------------------------------------------------------------------------*/

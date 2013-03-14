@@ -1,0 +1,283 @@
+# Makefile for the STM32L152VB Cortex M3 medium-density microcontroller
+# author Marcus Lunden <marcus@thingsquare.com>
+# ------------------------------------------------------------------------------
+# we do not have support for GCC yet, due to GCC missing USB VCP support.
+# As such, we use IAR per default
+
+.SUFFIXES:
+
+IAR=1
+ifdef GCC
+$(warning GCC compiler is not supported for this platform, use IAR instead (set IAR=1))
+endif
+undefine GCC
+
+# CPU folder
+CONTIKI_CPU=$(CONTIKI)/cpu/arm/stm32l152
+
+# Source folders for ST HAL libraries, ARM CMSIS and IAR conf files
+CONTIKI_CPU_DIRS =  . \
+		SpiritSDK_Virtual_Com \
+		SpiritSDK_Virtual_Com/inc \
+		SpiritSDK_Virtual_Com/src \
+		STM32_USB-FS-Device_Lib \
+		STM32_USB-FS-Device_Lib/inc \
+		STM32_USB-FS-Device_Lib/src \
+		CMSIS \
+		CMSIS/Include \
+		runtime
+
+# source files: proprietary sources for startup. Refer to CMSIS docs.
+PROP_SYS_ARCH_C = \
+		system_stm32l1xx.c
+
+PROP_SYS_ARCH_S = \
+		startup_stm32l1xx_md.s
+
+# source files: proprietary system sources for USB support
+PROP_USB_ARCH = \
+		SDK_EVAL_VC_Desc.c \
+		SDK_EVAL_VC_Endp.c \
+		SDK_EVAL_VC_General.c \
+		SDK_EVAL_VC_Istr.c \
+		SDK_EVAL_VC_Prop.c \
+		SDK_EVAL_VC_Pwr.c \
+		otgd_fs_cal.c \
+		otgd_fs_dev.c \
+		otgd_fs_int.c \
+		otgd_fs_pcd.c \
+		usb_core.c \
+		usb_init.c \
+		usb_int.c \
+		usb_mem.c \
+		usb_regs.c \
+		usb_sil.c
+
+# source files: Contiki arch source files
+CONTIKI_CPU_ARCH=   watchdog.c                                \
+                    rtimer-arch.c                             \
+                    clock.c                                   
+
+UIPDRIVERS=         uip-arch.c
+
+# to be implemented
+ELFLOADER=
+
+# add CPU folder to search path for .s (assembler) files
+vpath %.s $(CONTIKI_CPU)
+
+# include all files above
+ssubst = ${patsubst %.s,%.o,${patsubst %.s79,%.o,$(1)}}
+CONTIKI_SOURCEFILES += $(PROP_SYS_ARCH_C) $(PROP_USB_ARCH) $(CONTIKI_CPU_ARCH) $(ELFLOADER) $(UIPDRIVERS)
+PROJECT_OBJECTFILES += ${addprefix $(OBJECTDIR)/,$(CONTIKI_TARGET_MAIN:.c=.o)}
+PROJECT_OBJECTFILES += ${addprefix $(OBJECTDIR)/,${call ssubst, $(PROP_SYS_ARCH_S)}}
+#CONTIKI_OBJECTFILES += ${addprefix $(OBJECTDIR)/,${call ssubst, $(PROP_SYS_ARCH_S)}}
+
+#------------------------------------------------ defines common for IAR and GCC
+# set CPU speed in Hz, NB this might have unexpected side-effects if not at 32
+# Mhz as it is not immediately clear how specialized the startup code etc is.
+# That being said, setting to 24MHz seems to work fine, looking at Contiki clocks
+# at least.
+F_CPU = 32000000
+
+#--------------------------------------------------------------------------- IAR
+ifdef IAR
+
+# Compiler definitions
+IAR      = 1
+CC	     = iccarm
+LD       = ilinkarm
+AS       = iasmarm
+AR       = iarchive
+OBJCOPY  = ielftool
+STRIP    = iobjmanip
+SIZE     = 
+NM       = 
+
+# Find the path to compiler; this works with cygwin
+ifndef IAR_PATH
+IAR_BIN_PATH := $(shell dirname "`which $(CC)`")
+IAR_PATH_C := $(shell dirname "$(IAR_BIN_PATH)")
+IAR_PATH := $(shell cygpath -m "$(IAR_PATH_C)")
+endif
+		
+# ------------compiler flags
+CFLAGS+=\
+	--diag_suppress Pa050 \
+	--no_unroll \
+	--no_inline \
+	--no_tbaa \
+	--no_scheduling \
+	--debug \
+	--endian=little \
+	--cpu=Cortex-M3 \
+	-Om \
+	-e \
+	--fpu=None \
+	--dlib_config "$(IAR_PATH)/inc/c/DLib_Config_Normal.h" \
+	-DIAR=1 \
+	-DHSE_VALUE=$(F_CPU)ul \
+	-DUSE_STDPERIPH_DRIVER \
+	-DSTM32L1XX_MD \
+	-DIAR_ARM_CM3 \
+	-DVECT_TAB_FLASH \
+	-DWITH_UIP6
+
+
+# ------------assembler flags
+ASFLAGS+= -s+ -r -DIAR_ARM_CM3 -cAOM -B -t8 --cpu Cortex-M3 --fpu None
+
+#iasmarm -s+ -w+ -r -DIAR_ARM_CM3 -cAOM -B -t8 --cpu Cortex-M3 --fpu None startup_stm32l1xx_md.s
+
+# ------------archive creation flags
+AROPTS= --create --output 
+
+# ----------linker flags
+# this will also generate log and symbol map files
+LDFLAGS+= \
+	--config "$(IAR_PATH)/config/linker/ST/stm32l152xB.icf" \
+	--entry __iar_program_start \
+	--redirect _Printf=_PrintfLarge \
+	--redirect _Scanf=_ScanfLarge \
+	--semihosting \
+	--no_exceptions \
+	--no_remove \
+	--cpu=Cortex-M3 \
+	--log libraries,initialization,modules,redirects,sections,veneers,unused_fragments \
+	--log_file contiki-$(TARGET).log \
+	--map contiki-$(TARGET).map \
+	--vfe
+
+#--------------------------------------------------------------------------- GCC
+else
+$(warning Warning, GCC is not supported for STM32L152xB yet. Use IAR instead)
+
+### Compiler definitions
+GCC      = 1
+CC       = arm-none-eabi-gcc
+LD       = arm-none-eabi-ld
+SIZE     = arm-none-eabi-size
+AS       = arm-none-eabi-as
+AR       = arm-none-eabi-ar
+NM       = arm-none-eabi-nm
+OBJCOPY  = arm-none-eabi-objcopy
+STRIP    = arm-none-eabi-strip
+
+LINKERSCRIPT = $(CONTIKI_CPU)/STM32L10x_128k_16k_flash.ld
+
+ASFLAGS += -mcpu=cortex-m3 -mthumb
+
+# this platform wields a STM32L152VB medium-density device
+CFLAGS+=-DSTM32L1XX_MD=1
+#            -DF_CPU=$(F_CPU)UL                  \
+
+CFLAGS+=    -I.                                 \
+            -I$(CONTIKI)/core                   \
+            -I$(CONTIKI_CPU)                    \
+            -I$(CONTIKI)/platform/$(TARGET)     \
+            ${addprefix -I,$(APPDIRS)}          \
+            ${addprefix -I,$(CONTIKI_CPU_DIRS)} \
+            -Wall -g -O0                        \
+            -DWITH_UIP -DWITH_ASCII             \
+            -DHSE_VALUE=$(F_CPU)UL              \
+            -ffunction-sections                 \
+            -fdata-sections                     \
+            -mcpu=cortex-m3                     \
+            -mthumb                             \
+            -mfix-cortex-m3-ldrd                \
+            -std=c99                            \
+            -msoft-float                        \
+            -Wl,-Map=contiki-$(TARGET).map      \
+            -Wl,-gc-sections                    \
+            -Wl,-cref
+
+#            -Wl,-print-gc-sections              \
+#            -Wl,-verbose                        \
+#            -DMCK=$(MCK)                        \
+
+LDFLAGS += -L $(CONTIKI_CPU)            \
+           -T $(LINKERSCRIPT)           \
+           -mcpu=cortex-m3 -mthumb      \
+           -nostartfiles                
+
+ifeq ($(SMALL),1)
+CFLAGS += -ffunction-sections
+CFLAGS += -fdata-sections
+LDFLAGS += -Wl,--gc-sections,--undefined=_reset_vector__,--undefined=InterruptVectors,--undefined=_copy_data_init__,--undefined=_clear_bss_init__,--undefined=_end_of_init__
+endif   # /SMALL
+
+endif   # /GCC
+#---------------------------------------------------------------- </(IAR | GCC)>
+#CDEPFLAGS = $(CFLAGS) -D __MAKING_DEPS__
+
+
+
+# ------------------------------------------------------------------ Build rules
+CUSTOM_RULE_C_TO_OBJECTDIR_O=yes
+CUSTOM_RULE_C_TO_CE=yes
+CUSTOM_RULE_C_TO_CO=yes
+CUSTOM_RULE_C_TO_O=yes
+CUSTOM_RULE_S_TO_OBJECTDIR_O=yes
+CUSTOM_RULE_LINK=yes
+
+%.o: %.c
+	$(CC) $(CFLAGS) $< -o $@
+
+%.o: %.s
+	$(AS) $(ASFLAGS) $< -o $@
+
+define FINALIZE_CYGWIN_DEPENDENCY
+sed -e 's/ \([A-Z]\):\\/ \/cygdrive\/\L\1\//' -e 's/\\/\//g' \
+	    <$(@:.o=.P) >$(@:.o=.d); \
+rm -f $(@:.o=.P)
+endef
+
+$(OBJECTDIR)/%.o: %.c
+	$(CC) $(CFLAGS) --dependencies=m $(@:.o=.P) $< -o $@
+ifeq ($(HOST_OS),Windows)
+	@$(FINALIZE_CYGWIN_DEPENDENCY)
+endif
+
+$(OBJECTDIR)/%.o: %.s
+	$(AS) $(ASFLAGS) $< -o $@
+
+%.co: %.c
+	$(CC) $(CFLAGS) -DAUTOSTART_ENABLE $< -o $@
+
+%.ce: %.o
+	$(LD) $(LDFLAGS) --relocatable -T $(CONTIKI_CPU)/merge-rodata.ld $< -o $@
+	$(STRIP) -K _init -K _fini --strip-unneeded -g -x $@
+
+%-stripped.o: %.c
+	$(CC) $(CFLAGS) $< -o $@
+	$(STRIP) --strip $@
+
+%-stripped.o: %.o
+	$(STRIP) --strip $@ $<
+
+%.o: ${CONTIKI_TARGET}/loader/%.S
+	$(AS) -o $(notdir $(<:.S=.o)) $<
+
+%.$(TARGET): %.co $(PROJECT_OBJECTFILES) contiki-$(TARGET).a $(STARTUPFOLDER) # $(OBJECTDIR)/empty-symbols.o
+	$(LD) $(LDFLAGS) -o $@ $(filter-out %.a,$^) $(filter %.a,$^)
+
+%.ihex: %.$(TARGET)
+	$(OBJCOPY) $^ --ihex $@
+
+%.hex: %.ihex
+	#	@rm $*.hex
+	@mv -f $*.ihex $*.hex
+
+%.bin: %.$(TARGET)
+	$(OBJCOPY) --bin $@
+
+.PHONY: symbols.c
+
+symbols.c:
+	cp ${CONTIKI}/tools/empty-symbols.c symbols.c
+	cp ${CONTIKI}/tools/empty-symbols.h symbols.h
+
+# Don't use core/loader/elfloader.c, use elfloader-otf.c instead
+$(OBJECTDIR)/elfloader.o: 
+	echo -n >$@
+

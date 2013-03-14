@@ -1,0 +1,105 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Router</title>
+<link href="http://dunkels.com/adam/u.css" rel="stylesheet">
+</head><body>
+<div class="gap"><h1>The Router</h1></div>
+<div class="c"><div class="r"><div class="s6 o1"><div class="w" id="rpl-spin">
+<h1>RPL Routes</h1><div id="routes"></div>
+<a href="#" id="rpl-reset" class="b">Reset network</a>
+<a href="#" id="rpl-load" class="b b-p">Refresh</a>
+<a href="#" id="rpl-ping" class="b b-p">Ping</a>
+</div></div><div class="s4"><div class="w">
+<h1>IPv6 Neighbors</h1><div id="nbrs"></div>
+<a href="#" id="nbrs-load" class="b b-p">Refresh</a>
+<a href="#" id="nbrs-ping" class="b b-p">Ping</a>
+</div></div></div><div class="r"><div class="s8 o2"><div class="w">
+<h1>IP Address Mapping Table</h1>
+<div id="nat"></div><a href="#" id="nat-load" class="b b-p">Refresh</a>
+</div></div></div>
+<div class="r"><div class="s4 o4"><a href="#" id="net-reboot" class="b">Reboot entire network</a><div id="reboot"></div></div></div>
+</div><footer><div class="c"><p class="text-center">
+The footer</p></div></footer>
+<script src="http://dunkels.com/adam/u.js"></script>
+<script>
+var opts = {
+lines: 12,
+length: 4,
+width: 2,
+radius: 4,
+rotate: 12,
+color: '#000',
+speed: 1.8,
+trail: 56,
+shadow: false,
+hwaccel: false,
+className: 'spinner',
+zIndex: 2e9,
+top: 'auto',
+left: 'auto'
+};
+
+$('#rpl-load').click(function() {
+var target = document.getElementById('rpl-spin');
+var spinner = new Spinner(opts).spin(target);
+$.get('routes.shtml', function(data) {
+$('#routes').html(data);
+spinner.stop();
+});
+return false;
+});
+$('#rpl-reset').click(function() {
+var target = document.getElementById('routes');
+var spinner = new Spinner(opts).spin(target);
+$.get('rplreset.shtml', function(data) {
+$('#routes').html(data);
+});
+return false;
+});
+$('#nbrs-load').click(function() {
+var target = document.getElementById('nbrs');
+var spinner = new Spinner(opts).spin(target);
+$.get('nbrs.shtml', function(data) {
+$('#nbrs').html(data);
+});
+return false;
+});
+
+$('#nbrs-ping').click(function() {
+var target = document.getElementById('nbrs');
+var spinner = new Spinner(opts).spin(target);
+$.get('nbrsping.shtml', function(data) {
+$('#nbrs').html(data);
+});
+return false;
+});
+
+$('#rpl-ping').click(function() {
+var target = document.getElementById('routes');
+var spinner = new Spinner(opts).spin(target);
+$.get('routesping.shtml', function(data) {
+$('#routes').html(data);
+});
+return false;
+});
+
+$('#nat-load').click(function() {
+var target = document.getElementById('nat');
+var spinner = new Spinner(opts).spin(target);
+$.get('nat.shtml', function(data) {
+$('#nat').html(data);
+});
+return false;
+});
+
+$('#net-reboot').click(function() {
+var target = document.getElementById('reboot');
+var spinner = new Spinner(opts).spin(target);
+$.get('reboot.shtml', function(data) {
+$('#reboot').html(data);
+});
+return false;
+});
+</script>
+</body>
+</html>

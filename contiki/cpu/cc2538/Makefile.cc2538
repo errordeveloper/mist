@@ -1,0 +1,140 @@
+# CC2538 port Makefile
+
+ifdef IAR   #-------------------------------------------------------------------
+# Compiler definitions
+IAR =       1
+CC =        iccarm
+LD =        ilinkarm
+AS =        iasmarm
+AR =        iarchive
+OBJCOPY =   ielftool
+STRIP =     iobjmanip
+SIZE =
+NM =
+
+# Find the path to compiler; this works with cygwin
+ifndef IAR_PATH
+IAR_BIN_PATH := $(shell dirname "`which $(CC)`")
+IAR_PATH_C := $(shell dirname "$(IAR_BIN_PATH)")
+IAR_PATH := $(shell cygpath -m "$(IAR_PATH_C)")
+endif
+
+CFLAGS+=\
+--diag_suppress Pa050 \
+--no_unroll \
+--no_inline \
+--no_tbaa \
+--no_scheduling \
+--debug \
+--endian=little \
+--cpu=Cortex-M3 \
+-Om \
+-e \
+--fpu=None \
+--dlib_config "$(IAR_PATH)/inc/c/DLib_Config_Normal.h" \
+-DIAR=1 \
+-DIAR_ARM_CM3 \
+-DVECT_TAB_FLASH \
+-DWITH_UIP6
+#-DHSE_VALUE=$(F_CPU)ul \
+
+ASFLAGS+= -s+ -r -DIAR_ARM_CM3 -cAOM -B -t8 --cpu Cortex-M3 --fpu None
+
+AROPTS= --create --output
+
+LDFLAGS+= \
+--config "$(IAR_PATH)/config/linker/TexasInstruments/cx2538xf53.icf" \
+--entry __iar_program_start \
+--redirect _Printf=_PrintfLarge \
+--redirect _Scanf=_ScanfLarge \
+--semihosting \
+--no_exceptions \
+--no_remove \
+--cpu=Cortex-M3 \
+--log libraries,initialization,modules,redirects,sections,veneers,unused_fragments \
+--log_file contiki-$(TARGET).log \
+--map contiki-$(TARGET).map \
+--vfe
+
+else   # IAR -------------------------------------------------------------------
+CC = arm-none-eabi-gcc
+CPP = arm-none-eabi-cpp
+LD = arm-none-eabi-gcc
+AR = arm-none-eabi-ar
+OC = arm-none-eabi-objcopy
+SIZE = arm-none-eabi-size
+
+
+LDSCRIPT = $(OBJECTDIR)/cc2538.ld
+
+CFLAGS += -O2 -mcpu=cortex-m3 -mthumb -mlittle-endian
+CFLAGS += -fshort-enums -fomit-frame-pointer -fno-strict-aliasing
+CFLAGS += -Wall
+LDFLAGS += -mcpu=cortex-m3 -mthumb -nostartfiles
+LDFLAGS += -T $(LDSCRIPT)
+LDFLAGS += -Wl,-Map=contiki-$(TARGET).map,--cref,--no-warn-mismatch
+OCFLAGS += -O binary --gap-fill 0xff
+
+### Are we building with code size optimisations?
+ifeq ($(SMALL),1)
+  CFLAGS += -ffunction-sections -fdata-sections
+  LDFLAGS += -Wl,--gc-sections
+endif
+
+endif   # IAR ------------------------------------------------------------------
+
+### If the user-specified a Node ID, pass a define
+ifdef NODEID
+  CFLAGS += -DIEEE_ADDR_NODE_ID=$(NODEID)
+endif
+
+### CPU-dependent cleanup files
+CLEAN += symbols.c symbols.h *.d *.elf
+
+### CPU-dependent directories
+CONTIKI_CPU_DIRS = . dev usb
+
+### Use the existing debug I/O in cpu/arm/common
+CONTIKI_CPU_DIRS += ../arm/common/dbg-io
+
+### Use usb core from cpu/cc253x/usb/common
+CONTIKI_CPU_DIRS += ../cc253x/usb/common ../cc253x/usb/common/cdc-acm
+
+### CPU-dependent source files
+CONTIKI_CPU_SOURCEFILES += clock.c rtimer-arch.c uart.c watchdog.c
+CONTIKI_CPU_SOURCEFILES += nvic.c cpu.c sys-ctrl.c gpio.c ioc.c
+CONTIKI_CPU_SOURCEFILES += cc2538-rf.c udma.c lpm.c
+CONTIKI_CPU_SOURCEFILES += dbg.c ieee-addr.c
+CONTIKI_CPU_SOURCEFILES += slip-arch.c slip.c
+
+DEBUG_IO_SOURCEFILES += dbg-printf.c dbg-snprintf.c dbg-sprintf.c strformat.c
+
+USB_CORE_SOURCEFILES += usb-core.c cdc-acm.c
+USB_ARCH_SOURCEFILES += usb-arch.c usb-serial.c cdc-acm-descriptors.c
+
+CONTIKI_SOURCEFILES += $(CONTIKI_CPU_SOURCEFILES) $(DEBUG_IO_SOURCEFILES)
+CONTIKI_SOURCEFILES += $(USB_CORE_SOURCEFILES) $(USB_ARCH_SOURCEFILES)
+
+### Don't treat the .elf as intermediate
+.PRECIOUS: %.elf
+
+### Always re-build ieee-addr.o in case the command line passes a new NODEID
+FORCE:
+
+$(OBJECTDIR)/ieee-addr.o: ieee-addr.c FORCE
+	$(CC) $(CFLAGS) -c $< -o $@
+
+### Compilation rules
+CUSTOM_RULE_LINK=1
+
+%.elf: $(TARGET_STARTFILES) %.co $(PROJECT_OBJECTFILES) $(PROJECT_LIBRARIES) contiki-$(TARGET).a $(LDSCRIPT)
+	$(LD) $(LDFLAGS) ${filter-out $(LDSCRIPT) %.a,$^} ${filter %.a,$^} -o $@
+
+%.$(TARGET): %.elf
+	$(OC) $(OCFLAGS) $< $@
+	$(SIZE) $<
+
+### This rule used to generate the correct linker script, depending on whether
+### we want to use the SRAM non-retention area
+$(LDSCRIPT): $(CONTIKI_CPU)/cc2538.lds $(CONTIKI_CPU)/lpm-conf.h
+	$(CPP) -P -E $< -o $@
