@@ -55,7 +55,7 @@
 #include "ip64.h"
 #include "ip64-addr.h"
 #include "ip64-addrmap.h"
-#include "ip64-conf.h"
+#include "ip64-conf-wrapper.h"
 #include "ip64-special-ports.h"
 #include "ip64-eth-interface.h"
 #include "ip64-tap-driver.h"

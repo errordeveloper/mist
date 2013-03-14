@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2013, Cosm Ltd., https://cosm.com/.
  * Copyright (c) 2012, Thingsquare, http://www.thingsquare.com/.
  * All rights reserved.
  *
@@ -29,47 +30,13 @@
  * OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
-#ifndef IP64_H
-#define IP64_H
+#ifndef IP64_CONF_WRAPPER_H
+#define IP64_CONF_WRAPPER_H
 
-#include "net/uip.h"
+#ifdef IP64_CONF_TYPICAL
+#include "ip64-conf-typical.h"
+#else
+#include "ip64-conf.h"
+#endif
 
-void ip64_init(void);
-int ip64_6to4(const uint8_t *ipv6packet, const uint16_t ipv6len,
-	      uint8_t *resultpacket);
-int ip64_4to6(const uint8_t *ipv4packet, const uint16_t ipv4len,
-	      uint8_t *resultpacket);
-
-void ip64_set_ipv4_address(const uip_ip4addr_t *ipv4addr,
-			   const uip_ip4addr_t *netmask);
-void ip64_set_ipv6_address(const uip_ip6addr_t *ipv6addr);
-
-const uip_ip4addr_t *ip64_get_hostaddr(void);
-const uip_ip4addr_t *ip64_get_netmask(void);
-const uip_ip4addr_t *ip64_get_draddr(void);
-
-void ip64_set_hostaddr(const uip_ip4addr_t *hostaddr);
-void ip64_set_netmask(const uip_ip4addr_t *netmask);
-void ip64_set_draddr(const uip_ip4addr_t *draddr);
-
-extern uint8_t *ip64_packet_buffer;
-extern uint16_t ip64_packet_buffer_maxlen;
-
-#include "ip64-conf-wrapper.h"
-
-#ifndef IP64_CONF_ETH_DRIVER
-#error IP64_CONF_ETH_DRIVER must be #defined in ip64-conf.h
-#else /* IP64_CONF_ETH_DRIVER */
-#define IP64_ETH_DRIVER IP64_CONF_ETH_DRIVER
-#endif /* IP64_CONF_ETH_DRIVER */
-
-#ifndef IP64_CONF_INPUT
-#error IP64_CONF_INPUT must be #defined in ip64-conf.h
-#else /* IP64_CONF_INPUT */
-#define IP64_INPUT IP64_CONF_INPUT
-#endif /* IP64_CONF_INPUT */
-
-
-
-#endif /* IP64_H */
-
+#endif /* IP64_CONF_WRAPPER_H */

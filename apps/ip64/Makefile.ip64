@@ -8,6 +8,10 @@ IP64 = ip64.c ip64-addrmap.c ip64-null-driver.c ip64-special-ports.c
 
 ip64_src = $(IP64) $(IP64_DHCP) $(IP64_TAP) $(IP64_SLIP) $(IP64_ETH)
 
+ifeq ($(IP64_CONF),typical)
+CFLAGS+=-DIP64_CONF_TYPICAL
+endif
+
 APPS += ip64-addr mdns
 include $(MIST)/apps/ip64-addr/Makefile.ip64-addr
 include $(MIST)/apps/mdns/Makefile.mdns

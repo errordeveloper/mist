@@ -34,7 +34,7 @@
 #include "lib/memb.h"
 #include "lib/list.h"
 
-#include "ip64-conf.h"
+#include "ip64-conf-wrapper.h"
 
 #include <string.h>
 
