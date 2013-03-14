@@ -11,4 +11,4 @@ include $(MB851DIR)/Makefile.mb851
 PLATFORMAPPS += simple-rpl simple-udp-ping network-reboot drowsie
 
 vpath %.c $(MB851DIR) $(MB851DIR)/dev
-CFLAGS += -I $(MB851DIR) -DPLATFORM_CONF=\"mist-mb851-platform-conf.h\"
+CFLAGS += -I $(MB851DIR) -DPLATFORM_CONF=\"mist-mb851-platform-conf.h\" -DIP64_CONF_TYPICAL

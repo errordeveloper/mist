@@ -5,7 +5,8 @@ include $(COOJAPLATFORMDIR)/Makefile.cooja
 vpath %.c $(COOJAPLATFORMDIR) $(COOJAPLATFORMDIR)/dev \
           $(COOJAPLATFORMDIR)/net $(COOJAPLATFORMDIR)/lib \
           $(COOJAPLATFORMDIR)/sys $(COOJAPLATFORMDIR)/cfs
-CFLAGS += -I $(COOJAPLATFORMDIR)
+CFLAGS += -I $(COOJAPLATFORMDIR) \
+	  -DIP64_CONF_TYPICAL
 
 
 mtype%.o: contiki-cooja-main.o

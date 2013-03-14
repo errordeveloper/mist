@@ -21,7 +21,7 @@ vpath %.c $(CC2538DKDIR)
 vpath %.c $(CC2538DKDIR)/dev
 #LDSCRIPT = $(MISTCC2538DKDIR)/cc2538-mist.ld
 
-CFLAGS += -I $(CC2538DKDIR) -I $(CC2538DKDIR)/dev -DPLATFORM_CONF=\"platform-conf.h\"
+CFLAGS += -I $(CC2538DKDIR) -I $(CC2538DKDIR)/dev -DPLATFORM_CONF=\"platform-conf.h\" -DIP64_CONF_TYPICAL
 
 #-------------------------------------------------------------------------------
 # print target usage
