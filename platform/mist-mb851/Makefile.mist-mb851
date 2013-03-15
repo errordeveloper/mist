@@ -1,6 +1,6 @@
 CONTIKI_TARGET_MAIN = contiki-mist-mb851-main.c board-mb851.c
 
-MB851DIR=$(MIST)/contiki/platform/mb851
+MB851DIR=$(CONTIKI)/platform/mb851
 
 CONTIKI_TARGET_SOURCEFILES+=
 

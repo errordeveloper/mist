@@ -1,5 +1,5 @@
 
-CC2538DKDIR=$(MIST)/contiki/platform/cc2538dk
+CC2538DKDIR=$(CONTIKI)/platform/cc2538dk
 MISTCC2538DKDIR=$(MIST)/platform/mist-cc2538dk
 
 CONTIKI_TARGET_SOURCEFILES+=contiki-mist-cc2538dk-main.c

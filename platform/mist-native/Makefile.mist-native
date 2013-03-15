@@ -3,12 +3,12 @@ CONTIKI_TARGET_SOURCEFILES+=
 
 PLATFORMAPPS+=ip64
 
-include $(MIST)/contiki/platform/native/Makefile.native
+include $(CONTIKI)/platform/native/Makefile.native
 
 CFLAGS += -I$(MIST)/platform/mist-native
-CFLAGS += -I$(MIST)/contiki/platform/native
+CFLAGS += -I$(CONTIKI)/platform/native
 
 
-vpath %.c $(MIST)/platform/mist-native/ $(MIST)/contiki/platform/native/ $(MIST)/contiki/platform/native/dev
+vpath %.c $(MIST)/platform/mist-native/ $(CONTIKI)/platform/native/ $(CONTIKI)/platform/native/dev
 
 

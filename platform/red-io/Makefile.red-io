@@ -1,5 +1,5 @@
 
-ECONOTAGDIR=$(MIST)/contiki/platform/econotag
+ECONOTAGDIR=$(CONTIKI)/platform/econotag
 
 CONTIKI_TARGET_SOURCEFILES+=leds-arch.c enc28j60-arch.c 
 

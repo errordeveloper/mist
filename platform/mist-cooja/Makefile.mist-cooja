@@ -1,4 +1,4 @@
-COOJAPLATFORMDIR=$(MIST)/contiki/platform/cooja
+COOJAPLATFORMDIR=$(CONTIKI)/platform/cooja
 
 include $(COOJAPLATFORMDIR)/Makefile.cooja
 
