@@ -1,0 +1,26 @@
+APPS += tcp-socket
+
+LIBCOSM := $(PWD)/libcosm-$(TARGET).a
+LIBCOSM_OBJDIR = $(PWD)/$(OBJECTDIR)/libcosm
+
+PROJECT_LIBRARIES += $(LIBCOSM)
+
+LIBCOSM_COMM_LAYER = dummy
+
+export LIBCOSM
+export LIBCOSM_OBJDIR
+export LIBCOSM_COMM_LAYER
+
+export CC
+export AR
+#export LD
+#export NM
+#export CXX
+#export CPP
+#export SIZE
+#export RANLIB
+#export OBJCOPY
+
+$(LIBCOSM):
+	mkdir -p $(LIBCOSM_OBJDIR)
+	$(MAKE) -C $(LIBCOSM_SRC)
