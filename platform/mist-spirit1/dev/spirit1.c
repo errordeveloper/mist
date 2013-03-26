@@ -44,6 +44,8 @@
 #include "SDK_EVAL_Config.h"
 #include "SDK_EVAL_VC_General.h"
 
+#include <stdio.h>
+
 /*---------------------------------------------------------------------------*/
 #define DEBUG 0
 #if DEBUG
@@ -87,7 +89,15 @@ static uint8_t nResidualPayloadLength = 0;
 static uint8_t spirit_rxbuf[MAX_PACKET_LEN+1];
 static uint8_t spirit_txbuf[MAX_PACKET_LEN+1-SPIRIT_MAX_FIFO_LEN];
 
+#if NULLRDC_CONF_802154_AUTOACK
 #define ACK_LEN 3
+static int wants_an_ack = 0; /* The packet sent expects an ack */
+static int just_got_an_ack = 0; /* Interrupt callback just detected an ack */
+//#define ACKPRINTF printf
+#define ACKPRINTF
+#endif /* NULLRDC_CONF_802154_AUTOACK */
+
+/*---------------------------------------------------------------------------*/
 
 static int packet_is_prepared = 0;
 /*---------------------------------------------------------------------------*/
@@ -126,6 +136,23 @@ const struct radio_driver spirit_radio_driver =
 */
 #define SPIRIT1_STATUS()       (spirit1_arch_refresh_status() & SPIRIT1_STATE_STATEBITS)
 
+/*---------------------------------------------------------------------------*/
+void
+spirit1_printstatus(void)
+{
+  int s = SPIRIT1_STATUS();
+  if(s == SPIRIT1_STATE_STANDBY) {
+    printf("spirit1: SPIRIT1_STATE_STANDBY\n");
+  } else if(s == SPIRIT1_STATE_READY) {
+    printf("spirit1: SPIRIT1_STATE_READY\n");
+  } else if(s == SPIRIT1_STATE_TX) {
+    printf("spirit1: SPIRIT1_STATE_TX\n");
+  } else if(s == SPIRIT1_STATE_RX) {
+    printf("spirit1: SPIRIT1_STATE_RX\n");
+  } else {
+    printf("spirit1: status: %d\n", s);
+  }
+}
 /*---------------------------------------------------------------------------*/
 /* Strobe a command. The rationale for this is to clean up the messy legacy code. */
 static void
@@ -249,7 +276,9 @@ spirit_radio_init(void)
   SpiritIrq(RX_DATA_READY,S_ENABLE);
   SpiritIrq(VALID_SYNC,S_ENABLE);
   SpiritIrq(RX_DATA_DISC, S_ENABLE);
-  
+  SpiritIrq(TX_FIFO_ERROR, S_ENABLE);
+  SpiritIrq(RX_FIFO_ERROR, S_ENABLE);
+
   /* Configure Spirit1 */
   SpiritRadioPersistenRx(S_ENABLE);
   SpiritQiSetSqiThreshold(SQI_TH_0);
@@ -301,8 +330,22 @@ spirit_radio_prepare(const void *payload, unsigned short payload_len)
     PRINTF("PREPARE OUT ERR\n");
     return RADIO_TX_ERR;
   }
-  
+
+  /* Should we delay for an ack? */
+#if NULLRDC_CONF_802154_AUTOACK
+  frame802154_t info154;
+  wants_an_ack = 0;
+  if(payload_len > ACK_LEN
+      && frame802154_parse((char*)payload, payload_len, &info154) != 0) {
+    if(info154.fcf.frame_type == FRAME802154_DATAFRAME
+        && info154.fcf.ack_required != 0) {
+      wants_an_ack = 1;
+    }
+  }
+#endif /* NULLRDC_CONF_802154_AUTOACK */
+
   /* Sets the length of the packet to send */
+  spirit1_strobe(SPIRIT1_STROBE_FTX);
   SpiritPktBasicSetPayloadLength(payload_len);
   SpiritSpiWriteLinearFifo(payload_len, (uint8_t *)payload);
   
@@ -315,6 +358,9 @@ spirit_radio_prepare(const void *payload, unsigned short payload_len)
 static int
 spirit_radio_transmit(unsigned short payload_len)
 { 
+  /* This function blocks until the packet has been transmitted */
+  rtimer_clock_t rtimer_txdone, rtimer_rxack;
+
   PRINTF("TRANSMIT IN\n");
   if(!packet_is_prepared) {
     return RADIO_TX_ERR;
@@ -325,18 +371,43 @@ spirit_radio_transmit(unsigned short payload_len)
   spirit_txbuf[0] = payload_len;
   
   /* Puts the SPIRIT1 in TX state */
+  receiving_packet = 0;
   SpiritSetReadyState(); 
   spirit1_strobe(SPIRIT1_STROBE_TX);
-/*  SpiritCmdStrobeTx();*/
-
-  /* Busywait until tx done */
+  just_got_an_ack = 0;
   BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_TX, 5 * RTIMER_SECOND/1000);
   BUSYWAIT_UNTIL(SPIRIT1_STATUS() != SPIRIT1_STATE_TX, 50 * RTIMER_SECOND/1000);
-  BUSYWAIT_UNTIL(0, RX_WAIT_ACK_PERIOD * RTIMER_SECOND/1000)
+
+  /* Reset radio - needed for immediate RX of ack */
+  CLEAR_TXBUF();
+  CLEAR_RXBUF();
+  SpiritIrqClearStatus();
+  spirit1_strobe(SPIRIT1_STROBE_SABORT);
+  BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_READY, 1 * RTIMER_SECOND/1000);
+  spirit1_strobe(SPIRIT1_STROBE_READY);
+  BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_READY, 1 * RTIMER_SECOND/1000);
+  spirit1_strobe(SPIRIT1_STROBE_RX);
+  BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_RX, 1 * RTIMER_SECOND/1000);
+
+#if NULLRDC_CONF_802154_AUTOACK
+  if (wants_an_ack) {
+    rtimer_txdone = RTIMER_NOW();
+    BUSYWAIT_UNTIL(just_got_an_ack, 15 * RTIMER_SECOND/1000);
+    rtimer_rxack = RTIMER_NOW();
+
+    if(just_got_an_ack) {
+      ACKPRINTF("debug_ack: ack received after %u/%u ticks\n",
+             (uint32_t)(rtimer_rxack - rtimer_txdone), 15 * RTIMER_SECOND/1000);
+    } else {
+      ACKPRINTF("debug_ack: no ack received\n");
+    }
+  }
+#endif /* NULLRDC_CONF_802154_AUTOACK */
 
   PRINTF("TRANSMIT OUT\n");
 
   CLEAR_TXBUF();
+
   packet_is_prepared = 0;
   return RADIO_TX_OK;
 }
@@ -530,6 +601,38 @@ PROCESS_THREAD(spirit_radio_process, ev, data)
     len = spirit_radio_read(packetbuf_dataptr(), PACKETBUF_SIZE);
 
     if(len > 0) {
+
+#if NULLRDC_CONF_802154_AUTOACK
+      /* Check if the packet has an ACK request */
+      frame802154_t info154;
+      if(len > ACK_LEN &&
+          frame802154_parse((char*)packetbuf_dataptr(), len, &info154) != 0) {
+        if(info154.fcf.frame_type == FRAME802154_DATAFRAME &&
+            info154.fcf.ack_required != 0 &&
+            rimeaddr_cmp((rimeaddr_t *)&info154.dest_addr,
+                         &rimeaddr_node_addr)) {
+
+          /* Send an ACK packet */
+          uint8_t ack_frame[ACK_LEN] = {
+              FRAME802154_ACKFRAME,
+              0x00,
+              info154.seq
+          };
+
+          spirit1_strobe(SPIRIT1_STROBE_FTX);
+          SpiritPktBasicSetPayloadLength((uint16_t) ACK_LEN);
+          SpiritSpiWriteLinearFifo((uint16_t) ACK_LEN, (uint8_t *) ack_frame);
+
+          SpiritSetReadyState();
+          spirit1_strobe(SPIRIT1_STROBE_TX);
+          BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_TX, 1 * RTIMER_SECOND/1000);
+          BUSYWAIT_UNTIL(SPIRIT1_STATUS() != SPIRIT1_STATE_TX, 1 * RTIMER_SECOND/1000);
+
+          ACKPRINTF("debug_ack: sent ack %d\n", ack_frame[2]);
+        }
+      }
+#endif /* NULLRDC_CONF_802154_AUTOACK */
+
       packetbuf_set_datalen(len);   
       NETSTACK_RDC.input();
     }
@@ -539,6 +642,12 @@ PROCESS_THREAD(spirit_radio_process, ev, data)
 
     if(interrupt_callback_wants_poll) {
       spirit1_interrupt_callback();
+
+      if(SPIRIT1_STATUS() == SPIRIT1_STATE_READY) {
+        spirit1_strobe(SPIRIT1_STROBE_RX);
+        BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_RX, 1 * RTIMER_SECOND/1000);
+      }
+
     }
   }
 
@@ -563,6 +672,19 @@ spirit1_interrupt_callback(void)
   SpiritIrqGetStatus(&xIrqStatus);
   SpiritIrqClearStatus();
 
+  if(xIrqStatus.IRQ_RX_FIFO_ERROR) {
+    receiving_packet = 0;
+    interrupt_callback_in_progress = 0;
+    spirit1_strobe(SPIRIT1_STROBE_FRX);
+    return;
+  }
+  if(xIrqStatus.IRQ_TX_FIFO_ERROR) {
+    receiving_packet = 0;
+    interrupt_callback_in_progress = 0;
+    spirit1_strobe(SPIRIT1_STROBE_FTX);
+    return;
+  }
+
   /* The IRQ_VALID_SYNC is used to notify a new packet is coming */
   if(xIrqStatus.IRQ_VALID_SYNC) {
     INTPRINTF("SYNC\n");
@@ -583,41 +705,20 @@ spirit1_interrupt_callback(void)
   if(xIrqStatus.IRQ_RX_DATA_READY) {
     SpiritSpiReadLinearFifo(SpiritLinearFifoReadNumElementsRxFifo(), &spirit_rxbuf[1]);
     spirit_rxbuf[0] = SpiritPktBasicGetReceivedPktLength();
-
     spirit1_strobe(SPIRIT1_STROBE_FRX);
-/*    SpiritCmdStrobeFlushRxFifo();*/
+
     INTPRINTF("RECEIVED\n");
 
    	process_poll(&spirit_radio_process);
 
     receiving_packet = 0;
     
-    /* Checks if the packet has an ACK request */
 #if NULLRDC_CONF_802154_AUTOACK
-    frame802154_t info154;
-    if(spirit_rxbuf[0] > ACK_LEN &&
-        frame802154_parse(&spirit_rxbuf[1], spirit_rxbuf[0], &info154) != 0) {
-      if(info154.fcf.frame_type == FRAME802154_DATAFRAME &&
-          info154.fcf.ack_required != 0 &&
-          rimeaddr_cmp((rimeaddr_t *)&info154.dest_addr,
-                       &rimeaddr_node_addr)) {
-
-        /* Sends the ACK packet */
-        uint8_t ack_frame[ACK_LEN] = {
-            FRAME802154_ACKFRAME,
-            0x00,
-            info154.seq
-        };
-        /* XXX Verify ack timing */
-        spirit1_strobe(SPIRIT1_STROBE_FTX);
-        packet_is_prepared = 0;
-        SpiritPktBasicSetPayloadLength(ACK_LEN);
-        SpiritSpiWriteLinearFifo(ACK_LEN, ack_frame);
-        SpiritSetReadyState();
-        spirit1_strobe(SPIRIT1_STROBE_TX);
-      }
+    if (spirit_rxbuf[0] == ACK_LEN) {
+      /* For debugging purposes we assume this is an ack for us */
+      just_got_an_ack = 1;
     }
-#endif
+#endif /* NULLRDC_CONF_802154_AUTOACK */
 
     interrupt_callback_in_progress = 0;
     return;

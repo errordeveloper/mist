@@ -47,15 +47,18 @@
 #include "mist-conf-const.h"
 
 #ifndef MIST_CONF_NETSTACK
-#define MIST_CONF_NETSTACK (MIST_CONF_NULLRDC)
+#define MIST_CONF_NETSTACK (MIST_CONF_NULLRDC | MIST_CONF_AES)
 #endif /* MIST_CONF_NETSTACK */
 
 #include "mist-default-conf.h"
 
 #define NETSTACK_CONF_RDC_CHANNEL_CHECK_RATE 8
-#define NULLRDC_CONF_802154_AUTOACK 0
+#define NULLRDC_CONF_802154_AUTOACK 1
 #define NETSTACK_CONF_FRAMER  framer_802154
 #define NETSTACK_CONF_NETWORK sicslowpan_driver
+
+#define RIMESTATS_CONF_ENABLED                      1
+#define RIMESTATS_CONF_ON                      1
 
 
 #if WITH_UIP6
