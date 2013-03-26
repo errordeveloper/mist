@@ -1,7 +1,3 @@
-# Makefile for the STM32L152VB + Spirit1 platform
-# author Marcus Lunden <marcus@thingsquare.com>
-# ------------------------------------------------------------------------------
-
 ifndef IAR
 $(warning GCC compiler is not supported for this platform, use IAR instead (set IAR=1))
 endif
@@ -9,26 +5,11 @@ endif
 # Default Mist apps
 PLATFORMAPPS += aes multichan drowsie drowsie-multichannel
 
-# folders included in the search path
-CONTIKI_TARGET_DIRS = . \
-		dev \
-		apps \
-		net \
-		dev/sdk \
-		dev/spirit1 \
-		STM32L1xx_StdPeriph_Driver \
-		STM32L1xx_StdPeriph_Driver/inc \
-		STM32L1xx_StdPeriph_Driver/src
+CONTIKI_TARGET_DIRS = . dev apps net dev/sdk dev/spirit1 \
+		STM32L1xx_StdPeriph_Driver STM32L1xx_StdPeriph_Driver/inc STM32L1xx_StdPeriph_Driver/src
 
-#     node-id.c
-#     uart1x.c lcd.c \
-#     spix.c \
-#     hal_lcd.c hal_lcd_fonts.c duty-cycle-scroller.c cfs-ram.c hal-pmm.c \
-
-# Contiki platform drivers
-ARCH_CONTIKI+=  leds.c                            \
-                leds-arch.c                       \
-                node-id.c
+ARCH_CONTIKI += leds.c leds-arch.c node-id.c rimestats.c
+# uart1x.c lcd.c spix.c hal_lcd.c hal_lcd_fonts.c cfs-ram.c hal-pmm.c
 
 # board and CPU (unfortunately here, should be moved to CPU folder) drivers
 ARCH_STDPERIPH =      misc.c                      \

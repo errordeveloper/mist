@@ -42,6 +42,7 @@
 #include "net/packetbuf.h"
 #include "net/queuebuf.h"
 #include "net/netstack.h"
+#include "net/rime/rimestats.h"
 #include <string.h>
 
 #define DEBUG 0
@@ -155,6 +156,10 @@ send_packet(mac_callback_t sent, void *ptr)
          sending with auto ack. */
       ret = MAC_TX_COLLISION;
     } else {
+      if(!is_broadcast) {
+        RIMESTATS_ADD(reliabletx);
+      }
+
       switch(NETSTACK_RADIO.transmit(packetbuf_totlen())) {
       case RADIO_TX_OK:
         if(is_broadcast) {
@@ -187,6 +192,7 @@ send_packet(mac_callback_t sent, void *ptr)
               len = NETSTACK_RADIO.read(ackbuf, ACK_LEN);
               if(len == ACK_LEN && ackbuf[2] == dsn) {
                 /* Ack received */
+                RIMESTATS_ADD(ackrx);
                 ret = MAC_TX_OK;
               } else {
                 /* Not an ack or ack not for us: collision */
