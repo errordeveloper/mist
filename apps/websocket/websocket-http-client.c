@@ -197,7 +197,7 @@ window_copy(int curptr, const char *data, unsigned char datalen)
     len = windowend - windowstart;
   }
 
-  strncpy(windowptr + windowstart, data, len);
+  strncpy((char *)windowptr + windowstart, data, len);
   windowstart += len;
 
   return curptr + datalen;
@@ -241,6 +241,9 @@ senddata(struct websocket_http_client_state *s)
       uip_mss():
       s->getrequestleft;
     uip_send(uip_appdata, len);
+  } else if(s->outputbufptr > 0 && s->outputbuf_sendnext != 0) {
+    /* Retransmit previously sent data */
+    uip_send(s->outputbuf, s->outputbuf_sendnext);
   } else if(s->outputbufptr > 0 && s->outputbuf_sendnext == 0) {
     len = MIN(s->outputbufptr, uip_mss());
     s->outputbuf_sendnext = len;
@@ -291,7 +294,7 @@ acked(struct websocket_http_client_state *s)
 static uint16_t
 parse_statusline(struct websocket_http_client_state *s, uint16_t len)
 {
-  uint8_t *cptr;
+  char *cptr;
   
   while(len > 0 && s->inputbufptr < sizeof(s->inputbuf)) {
     s->inputbuf[s->inputbufptr] = *(char *)uip_appdata;
@@ -299,11 +302,11 @@ parse_statusline(struct websocket_http_client_state *s, uint16_t len)
     --len;
     if(s->inputbuf[s->inputbufptr] == ISO_nl) {
 
-      if((strncmp(s->inputbuf, http_10,
+      if((strncmp((char *)s->inputbuf, http_10,
 		  sizeof(http_10) - 1) == 0) ||
-	 (strncmp(s->inputbuf, http_11,
+	 (strncmp((char *)s->inputbuf, http_11,
 		  sizeof(http_11) - 1) == 0)) {
-	cptr = &(s->inputbuf[9]);
+	cptr = (char *)&(s->inputbuf[9]);
 	s->httpflag = HTTPFLAG_NONE;
 	if(strncmp(cptr, http_200, sizeof(http_200) - 1) == 0) {
 	  /* 200 OK */
@@ -378,18 +381,18 @@ parse_headers(struct websocket_http_client_state *s, uint16_t len)
 
       s->inputbuf[s->inputbufptr - 1] = 0;
       /* Check for specific HTTP header fields. */
-      if(casecmp(s->inputbuf, http_content_type,
+      if(casecmp((char *)s->inputbuf, http_content_type,
 		 sizeof(http_content_type) - 1) == 0) {
 	/* Found Content-type field. */
-	cptr = strchr(s->inputbuf, ';');
+	cptr = strchr((char *)s->inputbuf, ';');
 	if(cptr != NULL) {
 	  *cptr = 0;
 	}
-	strncpy(s->mimetype, s->inputbuf +
+	strncpy(s->mimetype, (char *)s->inputbuf +
 		sizeof(http_content_type) - 1, sizeof(s->mimetype));
-      } else if(casecmp(s->inputbuf, http_location,
+      } else if(casecmp((char *)s->inputbuf, http_location,
 			sizeof(http_location) - 1) == 0) {
-	cptr = s->inputbuf +
+	cptr = (char *)s->inputbuf +
 	  sizeof(http_location) - 1;
 	
 	if(strncmp(cptr, http_http, 7) == 0) {
@@ -438,7 +441,7 @@ newdata(struct websocket_http_client_state *s)
 
   if(len > 0 && s->state == WEBSOCKET_HTTP_CLIENT_STATE_DATA &&
      s->httpflag != HTTPFLAG_MOVED) {
-    websocket_http_client_datahandler(s, (char *)uip_appdata, len);
+    websocket_http_client_datahandler(s, (uint8_t *)uip_appdata, len);
   }
 }
 /*-----------------------------------------------------------------------------------*/

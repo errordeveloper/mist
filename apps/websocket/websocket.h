@@ -43,7 +43,9 @@ typedef enum {
   WEBSOCKET_DATA = 5,
   WEBSOCKET_RESET = 6,
   WEBSOCKET_TIMEDOUT = 7,
-  WEBSOCKET_CLOSED = 8
+  WEBSOCKET_CLOSED = 8,
+  WEBSOCKET_PINGED = 9,
+  WEBSOCKET_DATA_RECEVIED = 10,
 } websocket_result;
 
 
@@ -72,14 +74,19 @@ struct websocket {
 
   uint8_t state;
 
+  uint8_t headercacheptr;
+  uint8_t headercache[10]; /* The maximum websocket header + mask is 6
+                              + 4 bytes long */
 };
 
 enum {
   WEBSOCKET_STATE_CLOSED = 0,
   WEBSOCKET_STATE_DNS_REQUEST_SENT = 1,
   WEBSOCKET_STATE_HTTP_REQUEST_SENT = 2,
-  WEBSOCKET_STATE_CONNECTED = 3,
-  WEBSOCKET_STATE_RECEIVING_DATA = 4,
+  WEBSOCKET_STATE_WAITING_FOR_HEADER = 3,
+  WEBSOCKET_STATE_RECEIVING_HEADER = 4,
+  WEBSOCKET_STATE_HEADER_RECEIVED = 5,
+  WEBSOCKET_STATE_RECEIVING_DATA = 6,
 };
 void websocket_init(void);
 

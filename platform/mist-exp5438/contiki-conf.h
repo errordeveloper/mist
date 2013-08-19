@@ -38,10 +38,10 @@
 #include "mist-conf-const.h"
 
 #ifndef MIST_CONF_NETSTACK
-#define MIST_CONF_NETSTACK (MIST_CONF_AES | MIST_CONF_MULTICHAN)
+#define MIST_CONF_NETSTACK (MIST_CONF_DROWSIE)
 #endif /* MIST_CONF_NETSTACK */
 
-#include "mist-default-conf.h"
+
 
 #define NETSTACK_CONF_RDC_CHANNEL_CHECK_RATE 8
 #define NULLRDC_CONF_802154_AUTOACK 1
@@ -50,6 +50,10 @@
 #ifndef CC2420_CONF_AUTOACK
 #define CC2420_CONF_AUTOACK              1
 #endif /* CC2420_CONF_AUTOACK */
+
+#ifndef CC2520_CONF_AUTOACK
+#define CC2520_CONF_AUTOACK              1
+#endif /* CC2520_CONF_AUTOACK */
 
 #if WITH_UIP6
 /* Network setup for IPv6 */
@@ -154,9 +158,9 @@
 #endif /* UIP_CONF_IPV6_RPL */
 
 /* configure number of neighbors and routes */
-#ifndef UIP_CONF_DS6_NBR_NBU
-#define UIP_CONF_DS6_NBR_NBU     30
-#endif /* UIP_CONF_DS6_NBR_NBU */
+#ifndef NBR_TABLE_CONF_MAX_NEIGHBORS
+#define NBR_TABLE_CONF_MAX_NEIGHBORS     30
+#endif /* NBR_TABLE_CONF_MAX_NEIGHBORS */
 #ifndef UIP_CONF_DS6_ROUTE_NBU
 #define UIP_CONF_DS6_ROUTE_NBU   30
 #endif /* UIP_CONF_DS6_ROUTE_NBU */
@@ -188,14 +192,19 @@
 #define SICSLOWPAN_CONF_FRAG                    1
 
 /* Unit: 1/16th second. 4 => 0.25s timeout */
-#undef SICSLOWPAN_CONF_MAXAGE
+#ifndef SICSLOWPAN_CONF_MAXAGE
 #define SICSLOWPAN_CONF_MAXAGE                  4
+#endif /* SICSLOWPAN_CONF_MAXAGE */
 
 #if (MIST_CONF_NETSTACK & MIST_CONF_DROWSIE_MULTICHANNEL)
 /* We need to increase the fragmentation timeout, as the multichannel protocol may transmit
  * the same fragment on two channels, causing up to 0.6s delay inbetween fragments. */
+#ifdef SICSLOWPAN_CONF_MAXAGE
+#if SICSLOWPAN_CONF_MAXAGE < 12
 #undef SICSLOWPAN_CONF_MAXAGE
 #define SICSLOWPAN_CONF_MAXAGE                  12
+#endif /* SICSLOWPAN_CONF_MAXAGE < 12 */
+#endif /* SICSLOWPAN_CONF_MAXAGE */
 #endif /* (MIST_CONF_NETSTACK & MIST_CONF_DROWSIE_MULTICHANNEL) */
 
 #endif /* SICSLOWPAN_CONF_FRAG */
@@ -214,10 +223,10 @@
 #define UIP_CONF_DHCP_LIGHT
 #define UIP_CONF_LLH_LEN         0
 #ifndef  UIP_CONF_RECEIVE_WINDOW
-#define UIP_CONF_RECEIVE_WINDOW  47
+#define UIP_CONF_RECEIVE_WINDOW  100
 #endif
 #ifndef  UIP_CONF_TCP_MSS
-#define UIP_CONF_TCP_MSS         47
+#define UIP_CONF_TCP_MSS         100
 #endif
 #define UIP_CONF_MAX_CONNECTIONS 4
 #define UIP_CONF_MAX_LISTENPORTS 8
@@ -230,13 +239,13 @@
 #define UIP_CONF_PINGADDRCONF    0
 #define UIP_CONF_LOGGING         0
 
-#define UIP_CONF_TCP_SPLIT       0
-
 /* include the project config */
 /* PROJECT_CONF_H might be defined in the project Makefile */
 #ifdef PROJECT_CONF_H
 #include PROJECT_CONF_H
 #endif /* PROJECT_CONF_H */
+
+#include "mist-default-conf.h"
 
 #if ((MIST_CONF_NETSTACK) & MIST_CONF_AES)
 #ifndef NETSTACK_AES_KEY
@@ -244,5 +253,10 @@
 #define NETSTACK_AES_KEY_DEFAULT 1
 #endif /* NETSTACK_AES_KEY */
 #endif /* ((MIST_CONF_NETSTACK) & MIST_CONF_AES) */
+
+#define CONTIKI_TARGET_MIST_EXP5438 1
+
+#define RIMESTATS_CONF_ON 1
+#define RIMESTATS_CONF_ENABLED 1
 
 #endif /* CONTIKI_CONF_H */

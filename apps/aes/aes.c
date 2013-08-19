@@ -445,11 +445,11 @@ aes_decr(unsigned char *state, unsigned char *expandedKey)
 }
 
 // encrypt
+static unsigned char expandedKey[176];
+
 void
 aes_encrypt(unsigned char *state, const unsigned char *key)
 {
-  unsigned char expandedKey[176];
-
   expandKey(expandedKey, key);  // expand the key into 176 bytes
   aes_encr(state, expandedKey);
 }
@@ -457,8 +457,6 @@ aes_encrypt(unsigned char *state, const unsigned char *key)
 void
 aes_decrypt(unsigned char *state, const unsigned char *key)
 {
-  unsigned char expandedKey[176];
-
   expandKey(expandedKey, key);  // expand the key into 176 bytes
   aes_decr(state, expandedKey);
 }

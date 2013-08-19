@@ -72,11 +72,14 @@
 void wpcap_start(char *ethifaddr, char *netaddr, char *netmask, int logging);
 
 void wpcap_send(void *buf, int len);
+void raw_send(void *buf, int len);
 
-uint16_t wpcap_poll(char **buf);
+uint16_t wpcap_poll(char **buf, int eth);
 
 #include "net/tcpdump.h"
 static int should_print = 0;
+
+static int send_eth = 0; /* Sends ethernet frames or IP packets */
 
 #define IP_HLEN 20
 
@@ -207,6 +210,10 @@ check_ip(const struct ip *ip, unsigned ip_len)
 {
   u_int16_t sum, ip_hl;
 
+  if(send_eth) {
+    return 0;
+  }
+
   /* Check IP version and length. */
   if((ip->ip_vhl & IP_V) != IP_V4) {
     return -1;
@@ -326,13 +333,17 @@ serial_to_wpcap(void)
       }
       PROGRESS("s");
 
-      /*      printf("Sending to wpcap\n");*/
-      if(uip.iphdr.ip_id != last_id) {
-        last_id = uip.iphdr.ip_id;
-        print_packet("to wpcap: ", uip.inbuf, inbufptr);
-        wpcap_send(uip.inbuf, inbufptr);
+      if(send_eth) {
+        raw_send(uip.inbuf, inbufptr);
       } else {
-        /*print_packet("IGNORED to wpcap: ", uip.inbuf, inbufptr);*/
+        /*      printf("Sending to wpcap\n");*/
+        if(uip.iphdr.ip_id != last_id) {
+          last_id = uip.iphdr.ip_id;
+          print_packet("to wpcap: ", uip.inbuf, inbufptr);
+          wpcap_send(uip.inbuf, inbufptr);
+        } else {
+          /*print_packet("IGNORED to wpcap: ", uip.inbuf, inbufptr);*/
+        }
       }
       /*      printf("After sending to wpcap\n");*/
       inbufptr = 0;
@@ -382,19 +393,13 @@ stdout_buf_empty(void)
 void
 stdout_flushbuf(void)
 {
-  int i;
-
   if(stdout_buf_empty()) {
     return;
   }
 
-  for(i = 0; i < stdout_buf_cnt; i++) {
-    /* TODO Error handling */
-    write(STDOUT_FILENO, &stdout_buf[i], 1);
-  }
-  fflush(stdout);
-
+  fwrite(stdout_buf, stdout_buf_cnt, 1, stdout);
   stdout_buf_cnt = 0;
+  fflush(stdout);
 }
 /*---------------------------------------------------------------------------*/
 void
@@ -404,6 +409,7 @@ write_slip_stdout(void *inbuf, int len)
   int i, ecode;
   struct ip *iphdr = inbuf;
 
+  if(!send_eth) {
   /*
    * Sanity checks.
    */
@@ -440,6 +446,7 @@ write_slip_stdout(void *inbuf, int len)
   if(ecode < 0) {
     fprintf(stderr, "write_slip_stdout: drop packet %d\n", ecode);
     return;
+  }
   }
 
   for(i = 0; i < len; i++) {
@@ -494,8 +501,12 @@ main(int argc, char **argv)
 
   ip_id = getpid() * time(NULL);
 
-  while((c = getopt(argc, argv, "D:hl:t:T")) != -1) {
+  while((c = getopt(argc, argv, "E:D:hl:t:T")) != -1) {
     switch (c) {
+    case 'E':
+      send_eth = 1;
+      break;
+
     case 'T':
       should_print = 1;
       break;
@@ -508,7 +519,7 @@ main(int argc, char **argv)
     case 'h':
     default:
       err(1,
-          "usage: wpcapstdio [-l] [-T] <IP address of local Ethernet card> <IP address of SLIP network> <netmask of SLIP network>");
+          "usage: wpcapstdio [-E] [-l] [-T] <IP address of local Ethernet card> <IP address of SLIP network> <netmask of SLIP network>");
       break;
     }
   }
@@ -516,7 +527,7 @@ main(int argc, char **argv)
   argv += (optind - 1);
 
   if(argc != 4) {
-    err(1, "usage: wpcapstdio [-T] <IP address of local Ethernet card> <IP address of SLIP network> <netmask of SLIP network>");
+    err(1, "usage: wpcapstdio [-E] [-T] <IP address of local Ethernet card> <IP address of SLIP network> <netmask of SLIP network>");
   }
 
   wpcap_start(argv[1], argv[2], argv[3], logging);
@@ -542,16 +553,21 @@ main(int argc, char **argv)
     if(stdout_buf_empty()) {
       char *pbuf = buf;
 
-      ret = wpcap_poll(&pbuf);
+      ret = wpcap_poll(&pbuf, send_eth);
       if(ret > 0) {
-        struct ip *iphdr = (struct ip *)pbuf;
-        if(iphdr->ip_id != last_id) {
-          /*last_id = iphdr->ip_id;*/
-          print_packet("to stdout: ", (uint8_t*)pbuf, ret);
+        if(send_eth) {
           write_slip_stdout(pbuf, ret);
           stdout_flushbuf();
         } else {
-          /*print_packet("IGNORED to stdout: ", (uint8_t*)pbuf, ret);*/
+          struct ip *iphdr = (struct ip *)pbuf;
+          if(iphdr->ip_id != last_id) {
+            /*last_id = iphdr->ip_id;*/
+            print_packet("to stdout: ", (uint8_t*)pbuf, ret);
+            write_slip_stdout(pbuf, ret);
+            stdout_flushbuf();
+          } else {
+            /*print_packet("IGNORED to stdout: ", (uint8_t*)pbuf, ret);*/
+          }
         }
       }
     }

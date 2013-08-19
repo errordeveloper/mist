@@ -215,7 +215,11 @@ main(void)
     } while(r > 0);
 
     /* We have serviced all pending events. Enter a Low-Power mode. */
+    ENERGEST_OFF(ENERGEST_TYPE_CPU);
+    ENERGEST_ON(ENERGEST_TYPE_LPM);
     lpm_enter();
+    ENERGEST_OFF(ENERGEST_TYPE_LPM);
+    ENERGEST_ON(ENERGEST_TYPE_CPU);
   }
 }
 /*---------------------------------------------------------------------------*/

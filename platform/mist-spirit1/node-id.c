@@ -55,7 +55,7 @@ node_id_restore(void)
   device_id[2] = DEVICE_ID_REG2;
 
   for(i = 0; i < 8; i += 1) {
-    node_mac[i] = *(d + i);
+    node_mac[i] = *(d + 4 + i);
   }
   node_id = (unsigned short) DEVICE_ID_REG2;
 }

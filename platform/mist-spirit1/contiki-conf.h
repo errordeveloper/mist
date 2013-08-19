@@ -42,7 +42,11 @@
 #ifndef __CONTIKI_CONF_H__
 #define __CONTIKI_CONF_H__
 
+#ifdef INCLUDE_SUBPLATFORM_CONF
+#include "subplatform-conf.h"
+#else /* INCLUDE_SUBPLATFORM_CONF */
 #include "platform-conf.h"
+#endif /* INCLUDE_SUBPLATFORM_CONF */
 
 #include "mist-conf-const.h"
 
@@ -102,7 +106,7 @@
 #endif /* COLLECT_NEIGHBOR_CONF_MAX_COLLECT_NEIGHBORS */
 
 #ifndef QUEUEBUF_CONF_NUM
-#define QUEUEBUF_CONF_NUM                16
+#define QUEUEBUF_CONF_NUM                8
 #endif /* QUEUEBUF_CONF_NUM */
 
 #ifndef TIMESYNCH_CONF_ENABLED
@@ -116,6 +120,8 @@
 #define UIP_CONF_DS6_AADDR_NBU              1
 #endif
 
+/* radio driver blocks until ACK is received */
+#define NULLRDC_CONF_ACK_WAIT_TIME          (0)
 
 #ifndef RF_CHANNEL
 #define RF_CHANNEL              26
@@ -164,9 +170,9 @@
 #endif /* UIP_CONF_IPV6_RPL */
 
 /* configure number of neighbors and routes */
-#ifndef UIP_CONF_DS6_NBR_NBU
-#define UIP_CONF_DS6_NBR_NBU     30
-#endif /* UIP_CONF_DS6_NBR_NBU */
+#ifndef NBR_TABLE_CONF_MAX_NEIGHBORS
+#define NBR_TABLE_CONF_MAX_NEIGHBORS     30
+#endif /* NBR_TABLE_CONF_MAX_NEIGHBORS */
 #ifndef UIP_CONF_DS6_ROUTE_NBU
 #define UIP_CONF_DS6_ROUTE_NBU   30
 #endif /* UIP_CONF_DS6_ROUTE_NBU */
@@ -197,9 +203,9 @@
 #ifndef SICSLOWPAN_CONF_FRAG
 #define SICSLOWPAN_CONF_FRAG                    1
 
-/* Unit: 1/16th second. 16 => 1.0s timeout */
+/* Unit: 1/16th second. 4 => 0.25s timeout */
 #undef SICSLOWPAN_CONF_MAXAGE
-#define SICSLOWPAN_CONF_MAXAGE                  16
+#define SICSLOWPAN_CONF_MAXAGE                  4
 
 #if (MIST_CONF_NETSTACK & MIST_CONF_DROWSIE_MULTICHANNEL)
 /* We need to increase the fragmentation timeout, as the multichannel protocol may transmit
@@ -223,11 +229,11 @@
 
 #define UIP_CONF_DHCP_LIGHT
 #define UIP_CONF_LLH_LEN         0
-#ifndef  UIP_CONF_RECEIVE_WINDOW
-#define UIP_CONF_RECEIVE_WINDOW  47
+#ifndef UIP_CONF_RECEIVE_WINDOW
+#define UIP_CONF_RECEIVE_WINDOW  150
 #endif
-#ifndef  UIP_CONF_TCP_MSS
-#define UIP_CONF_TCP_MSS         47
+#ifndef UIP_CONF_TCP_MSS
+#define UIP_CONF_TCP_MSS         UIP_CONF_RECEIVE_WINDOW
 #endif
 #define UIP_CONF_MAX_CONNECTIONS 4
 #define UIP_CONF_MAX_LISTENPORTS 8
@@ -254,5 +260,29 @@
 #define NETSTACK_AES_KEY_DEFAULT 1
 #endif /* NETSTACK_AES_KEY */
 #endif /* ((MIST_CONF_NETSTACK) & MIST_CONF_AES) */
+
+#define UART1_CONF_TX_WITH_INTERRUPT        0
+#define WITH_SERIAL_LINE_INPUT              1
+#undef ENERGEST_CONF_ON
+#define ENERGEST_CONF_ON                    0
+#define TELNETD_CONF_NUMLINES               6
+#define NETSTACK_CONF_RADIO                 spirit_radio_driver
+
+#undef UIP_CONF_BUFFER_SIZE
+#define UIP_CONF_BUFFER_SIZE            300
+#undef UIP_CONF_TCP_MSS
+#define UIP_CONF_TCP_MSS                (UIP_CONF_BUFFER_SIZE-70)
+#undef UIP_CONF_RECEIVE_WINDOW
+#define UIP_CONF_RECEIVE_WINDOW         (UIP_CONF_BUFFER_SIZE-70)
+#undef NBR_TABLE_CONF_MAX_NEIGHBORS
+#define NBR_TABLE_CONF_MAX_NEIGHBORS            8
+#undef UIP_CONF_MAX_ROUTES
+#define UIP_CONF_MAX_ROUTES             8
+#undef QUEUEBUF_CONF_NUM
+#define QUEUEBUF_CONF_NUM               10
+#undef PACKETBUF_CONF_SIZE
+#define PACKETBUF_CONF_SIZE             UIP_CONF_BUFFER_SIZE
+#define NETSTACK_RADIO_MAX_PAYLOAD_LEN  PACKETBUF_CONF_SIZE /* spirit1-config.h */
+
 
 #endif /* CONTIKI_CONF_H */

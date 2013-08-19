@@ -8,7 +8,7 @@ MISTAPPS+=mist-conf
 
 # Add a few more default Thingsquare Mist applications
 MISTAPPS+=aes drowsie ip64-addr ip64 mdns udp-socket tcp-socket websocket
-MISTAPPS+=simple-rpl
+MISTAPPS+=http-socket simple-rpl
 
 APPS+=$(MISTAPPS)
 

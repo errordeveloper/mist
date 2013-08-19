@@ -69,6 +69,8 @@
 
 #define VERBOSE_DEBUG 0
 
+#define WITH_EDNS_LIMIT_UDP_RES_PAYLOAD 1
+
 #if UIP_UDP
 
 #include <string.h>
@@ -378,6 +380,10 @@ check_entries(void)
         hdr->flags1 = DNS_FLAG1_RD;
       }
       hdr->numquestions = UIP_HTONS(1);
+#if WITH_EDNS_LIMIT_UDP_RES_PAYLOAD
+      hdr->numextrarr = UIP_HTONS(1); /* EDNS request */
+#endif /* WITH_EDNS_LIMIT_UDP_RES_PAYLOAD */
+
       query = (char *)uip_appdata + sizeof(*hdr);
       query = (char *)encode_name((unsigned char *)query, namemapptr->name);
       {
@@ -391,6 +397,21 @@ check_entries(void)
         *query++ = (int8_t)((DNS_CLASS_IN) >> 8);
         *query++ = (int8_t)((DNS_CLASS_IN));
       }
+
+#if WITH_EDNS_LIMIT_UDP_RES_PAYLOAD
+      /* EDNS additional record */
+      *query++ = (int8_t) 0x00; /* root */
+      *query++ = (int8_t) 0x00; /* EDNS0 */
+      *query++ = (int8_t) 0x29; /* EDNS0 */
+      *query++ = (int8_t) 0x00; /* 150 bytes UDP payload */
+      *query++ = (int8_t) 0x96; /* 150 bytes UDP payload */
+      *query++ = (int8_t) 0x00; /* Higher bits */
+      *query++ = (int8_t) 0x00; /* EDNS version 0 */
+      *query++ = (int8_t) 0x00; /* Z */
+      *query++ = (int8_t) 0x00; /* Z */
+      *query++ = (int8_t) 0x00; /* Data len */
+      *query++ = (int8_t) 0x00; /* Data len */
+#endif /* WITH_EDNS_LIMIT_UDP_RES_PAYLOAD */
 
       if(MDNS_CONF_SUPPORTS_MDNS && namemapptr->is_mdns) {
         uip_udp_packet_sendto(mdns_conn,
@@ -619,7 +640,7 @@ newdata(void)
       return;
     }
 
-    nameptr = (char *)hdr + sizeof(*hdr);
+    nameptr = (unsigned char *)hdr + sizeof(*hdr);
 
     while(nquestions > 0) {
       if(*nameptr & 0xc0) {

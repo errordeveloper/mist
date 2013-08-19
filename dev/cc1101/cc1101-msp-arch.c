@@ -55,6 +55,8 @@
 #include "isr_compat.h"
 #include <stdio.h>
 
+int cc1101_rx_interrupt(void);
+
 /*---------------------------------------------------------------------------*/
 void
 cc1101_arch_enable(void)
@@ -158,15 +160,14 @@ ISR(PORT1, cc1101_port1_interrupt)
   ENERGEST_ON(ENERGEST_TYPE_IRQ);
 
   //  printf("0x%2x\n", P1IV);
-  leds_toggle(LEDS_ALL);
-  //  cc1101_rx_interrupt();
+  /*  leds_toggle(LEDS_ALL);*/
   if(cc1101_rx_interrupt()) {
     LPM4_EXIT;
   }
   /* Reset interrupt trigger */
   CC1101_GDO2_PORT(IFG) &= ~BV(CC1101_GDO2_PIN);
   CC1101_GDO0_PORT(IFG) &= ~BV(CC1101_GDO0_PIN);
-  leds_toggle(LEDS_ALL);
+  /*  leds_toggle(LEDS_ALL);*/
   ENERGEST_OFF(ENERGEST_TYPE_IRQ);
 }
 /*---------------------------------------------------------------------------*/

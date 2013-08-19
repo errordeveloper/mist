@@ -153,7 +153,7 @@ public class LogListener extends VisPlugin implements HasQuickHelp {
 
   private LogOutputListener logOutputListener;
 
-  private boolean backgroundColors = false;
+  private boolean backgroundColors = true;
   private JCheckBoxMenuItem colorCheckbox;
 
   private boolean inverseFilter = false;
@@ -232,7 +232,7 @@ public class LogListener extends VisPlugin implements HasQuickHelp {
     appendCheckBox = new JCheckBoxMenuItem(appendAction);
     fileMenu.add(appendCheckBox);
 
-    colorCheckbox = new JCheckBoxMenuItem("Mote-specific coloring");
+    colorCheckbox = new JCheckBoxMenuItem("Mote-specific coloring", backgroundColors);
     showMenu.add(colorCheckbox);
     colorCheckbox.addActionListener(new ActionListener() {
       public void actionPerformed(ActionEvent e) {

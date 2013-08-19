@@ -46,34 +46,22 @@
 #include "SPIRIT_Config.h"
 #include "spirit1-const.h"
 
-   
-/**    
- * The TX_WAIT_PCKT_PERIOD should equal the max packet tx time.
- */   
-#define TX_WAIT_PCKT_PERIOD         50  
-   
-/**    
- * The RX_WAIT_ACK_PERIOD is the period within which the ACK packet must be received. 
- * ca PACKET_LENGTH / DATA_RATE + ELABORATION_TIME + SPI_OPERATIONS_USED. 
- */      
-#define RX_WAIT_ACK_PERIOD          50
-
-#define CCA_THRESHOLD               -90.0   /* dBm */
+#define CCA_THRESHOLD               -70.0   /* dBm */
+#define POWER_DBM                   11.0
+#define CHANNEL_SPACE               20e3
+#define FREQ_DEVIATION              127e3
+#define BANDWIDTH                   540.0e3
+#define MODULATION_SELECT           GFSK_BT1
+#define DATARATE                    250000
 #define XTAL_FREQUENCY              50000000    /* Hz */
 #define XTAL_OFFSET_PPM             0
 #define BASE_FREQUENCY              868.0e6
-#define CHANNEL_SPACE               20e3
-#define CHANNEL_NUMBER              0
-#define MODULATION_SELECT           FSK
-#define DATARATE                    38400
-#define FREQ_DEVIATION              20e3
-#define BANDWIDTH                   100.5E3
-#define POWER_DBM                   10.0
+#define CHANNEL_NUMBER              RF_CHANNEL
 #define PREAMBLE_LENGTH             PKT_PREAMBLE_LENGTH_04BYTES
 #define SYNC_LENGTH                 PKT_SYNC_LENGTH_4BYTES
 #define SYNC_WORD                   0x88888888
 #define LENGTH_TYPE                 PKT_LENGTH_VAR
-#define LENGTH_WIDTH                8
+#define LENGTH_WIDTH                16
 #define CRC_MODE                    PKT_CRC_MODE_16BITS_2
 #define CONTROL_LENGTH              PKT_CONTROL_LENGTH_0BYTES
 #define EN_ADDRESS                  S_DISABLE
@@ -81,14 +69,6 @@
 #define EN_WHITENING                S_DISABLE
 #define SPIRIT_MAX_FIFO_LEN         96
    
-/**    
- * The MAX_PACKET_LEN is an arbitrary value used to define the two array
- * spirit_txbuf and spirit_rxbuf.
- * The SPIRIT1 supports with its packet handler a length of 65,535 bytes,
- * and in direct mode (without packet handler) there is no limit of data.
- */  
-#define MAX_PACKET_LEN              SPIRIT_MAX_FIFO_LEN
-
 /**    
  * Spirit1 IC version
  */

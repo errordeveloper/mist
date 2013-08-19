@@ -9,6 +9,8 @@ CFLAGS += -I$(MIST)/platform/mist-native
 CFLAGS += -I$(MIST)/contiki/platform/native
 
 
-vpath %.c $(MIST)/platform/mist-native/ $(MIST)/contiki/platform/native/ $(MIST)/contiki/platform/native/dev
+vpath %.c $(MIST)/platform/mist-native/ $(MIST)/contiki/platform/native/\
+          $(MIST)/contiki/platform/native/dev \
+          $(MIST)/contiki/platform/native/ctk
 
 

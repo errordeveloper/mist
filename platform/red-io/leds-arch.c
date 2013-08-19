@@ -35,18 +35,18 @@
 
 static unsigned char last_leds;
 
+
 /*---------------------------------------------------------------------------*/
 void
 leds_arch_init(void)
 {
-  GPIO->FUNC_SEL.TMR0 = 3;
-  GPIO->PAD_DIR_SET.TMR0 = 1;
+  /* Green */
+  GPIO->FUNC_SEL.GPIO_43 = 3;
+  GPIO->PAD_DIR_SET.GPIO_43 = 1;
 
-  GPIO->FUNC_SEL.TMR1 = 3;
-  GPIO->PAD_DIR_SET.TMR1 = 1;
-
-  GPIO->FUNC_SEL.TMR2 = 3;
-  GPIO->PAD_DIR_SET.TMR2 = 1;
+  /* Red */
+  GPIO->FUNC_SEL.GPIO_50 = 3;
+  GPIO->PAD_DIR_SET.GPIO_50 = 1;
 }
 /*---------------------------------------------------------------------------*/
 unsigned char
@@ -59,20 +59,15 @@ void
 leds_arch_set(unsigned char leds)
 {
   last_leds = leds;
-  if(leds & LEDS_RED) {
-    gpio_set(TMR0);
-  } else {
-    gpio_reset(TMR0);
-  }
   if(leds & LEDS_GREEN) {
-    gpio_set(TMR1);
+    gpio_set(GPIO_43);
   } else {
-    gpio_reset(TMR1);
+    gpio_reset(GPIO_43);
   }
-  if(leds & LEDS_BLUE) {
-    gpio_set(TMR2);
+  if(leds & LEDS_RED) {
+    gpio_set(GPIO_50);
   } else {
-    gpio_reset(TMR2);
+    gpio_reset(GPIO_50);
   }
 }
 /*---------------------------------------------------------------------------*/

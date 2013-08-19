@@ -36,6 +36,7 @@
 #include "sys/etimer.h"
 #include "net/uip.h"
 #include "net/uip-debug.h"
+#include "net/uip-icmp6.h"
 #include "net/uip-ds6.h"
 #include "dev/leds.h"
 
@@ -47,9 +48,7 @@
 
 #define UDP_PORT 3117
 
-static struct simple_udp_connection ping_connection;
-
-#define MAX_DESTINATIONS UIP_DS6_NBR_NB
+#define MAX_DESTINATIONS NBR_TABLE_CONF_MAX_NEIGHBORS
 
 #define DEBUG 1
 
@@ -85,57 +84,6 @@ get_pingconn(const uip_ipaddr_t *addr)
   return NULL;
 }
 /*---------------------------------------------------------------------------*/
-static void
-receiver(struct simple_udp_connection *c,
-         const uip_ipaddr_t *sender_addr,
-         uint16_t sender_port,
-         const uip_ipaddr_t *receiver_addr,
-         uint16_t receiver_port,
-         const uint8_t *data,
-         uint16_t datalen)
-{
-#if DEBUG
-  printf("simple-udp-ping: receiver: len %d\n", datalen);
-#endif /* DEBUG */
-  if(datalen == DATALEN && memcmp(data, "ping", 4) == 0) {
-    /* Send back echo */
-#if DEBUG
-    printf("Sending echo to ");
-    uip_debug_ipaddr_print(sender_addr);
-    printf("\n");
-#endif
-    leds_toggle(LEDS_ALL);
-
-    simple_udp_sendto(&ping_connection, "echo", DATALEN, sender_addr);
-  } else if(datalen == DATALEN && memcmp(data, "echo", 4) == 0) {
-
-    struct pingconn_t* pingconn = get_pingconn(sender_addr);
-
-    if(pingconn != NULL) {
-      pingconn->replied = 1;
-      pingconn->sent = 0;
-      if (clock_time() - pingconn->echo_time2 > CLOCK_SECOND) {
-        pingconn->delay = clock_time() - pingconn->echo_time2;
-        pingconn->delay *= RTIMER_SECOND;
-        pingconn->delay /= CLOCK_SECOND;
-      } else {
-        pingconn->delay = RTIMER_NOW() - pingconn->echo_time;
-      }
-#if DEBUG
-      printf("Received echo from ");
-      uip_debug_ipaddr_print(sender_addr);
-      printf(", delay ticks %lu\n", pingconn->delay);
-#endif
-    } else {
-      printf("warning: received echo from unknown host\n");
-    }
-  } else {
-    printf(
-        "Error, unknown data  received on port %d from port %d with length %d\n",
-        receiver_port, sender_port, datalen);
-  }
-}
-/*---------------------------------------------------------------------------*/
 static struct pingconn_t*
 allocate_pingconn(uip_ipaddr_t *addr)
 {
@@ -160,15 +108,6 @@ allocate_pingconn(uip_ipaddr_t *addr)
   return &pingconns[last];
 }
 /*---------------------------------------------------------------------------*/
-static void
-free_pingconn(uip_ipaddr_t *addr)
-{
-  struct pingconn_t *pingconn = get_pingconn(addr);
-  if(pingconn != NULL) {
-    pingconn->in_use = 0;
-  }
-}
-/*---------------------------------------------------------------------------*/
 int
 simple_udp_ping_send_ping(uip_ipaddr_t *addr)
 {
@@ -178,6 +117,9 @@ simple_udp_ping_send_ping(uip_ipaddr_t *addr)
     pingconn = allocate_pingconn(addr);
   }
 
+  printf("simple_udp_ping_send_ping: ");
+  uip_debug_ipaddr_print(addr);
+  printf("\n");
   pingconn->replied = 0;
   pingconn->waiting = 1;
   return -1;
@@ -248,21 +190,48 @@ simple_udp_ping_init(void)
   process_start(&simple_udp_ping_process, NULL);
 }
 /*---------------------------------------------------------------------------*/
+static void
+echo_reply_callback(uip_ipaddr_t *sender,
+                    uint8_t ttl, uint8_t *data, uint16_t datalen)
+{
+  struct pingconn_t* pingconn = get_pingconn(sender);
+
+  if(pingconn != NULL) {
+    pingconn->replied = 1;
+    pingconn->sent = 0;
+    if(clock_time() - pingconn->echo_time2 > CLOCK_SECOND) {
+      pingconn->delay = clock_time() - pingconn->echo_time2;
+      pingconn->delay *= RTIMER_SECOND;
+      pingconn->delay /= CLOCK_SECOND;
+    } else {
+      pingconn->delay = RTIMER_NOW() - pingconn->echo_time;
+    }
+#if DEBUG
+    printf("Received echo from ");
+    uip_debug_ipaddr_print(sender);
+    printf(", delay ticks %lu\n", pingconn->delay);
+#endif
+  } else {
+    printf("warning: received ping reply from unknown host\n");
+  }
+}
+/*---------------------------------------------------------------------------*/
 PROCESS_THREAD(simple_udp_ping_process, ev, data)
 {
   static struct etimer et;
+  static struct uip_icmp6_echo_reply_notification n;
   int i;
 
   PROCESS_BEGIN();
 
+
+  uip_icmp6_echo_reply_callback_add(&n, echo_reply_callback);
   for(i = 0; i < MAX_DESTINATIONS; i++) {
     pingconns[i].in_use = 0;
   }
 
-  simple_udp_register(&ping_connection, UDP_PORT, NULL, UDP_PORT, receiver);
-
   while(1) {
-#define PERIOD (3*CLOCK_SECOND)
+#define PERIOD (2 * CLOCK_SECOND)
     etimer_set(&et, PERIOD);
     PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
 
@@ -278,7 +247,8 @@ PROCESS_THREAD(simple_udp_ping_process, ev, data)
         uip_debug_ipaddr_print(&pingconn->host);
         printf("\n");
 #endif
-        simple_udp_sendto(&ping_connection, "ping", DATALEN, &pingconn->host);
+        uip_icmp6_send(&pingconn->host,
+                       ICMP6_ECHO_REQUEST, 0, 0);
         pingconn->echo_time = RTIMER_NOW();
         pingconn->echo_time2 = clock_time();
         pingconn->sent = 1;

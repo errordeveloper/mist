@@ -63,11 +63,6 @@
   } while(0)
 
 /*---------------------------------------------------------------------------*/
-#define CLEAR_TXBUF()           (spirit_txbuf[0] = 0)
-#define CLEAR_RXBUF()           (spirit_rxbuf[0] = 0)
-#define IS_TXBUF_EMPTY()        (spirit_txbuf[0] == 0)
-#define IS_RXBUF_EMPTY()        (spirit_rxbuf[0] == 0)
-#define IS_RXBUF_FULL()         (spirit_rxbuf[0] != 0)
 
 /* transceiver state. */
 #define ON     0
@@ -78,28 +73,27 @@
 /*---------------------------------------------------------------------------*/
 static volatile unsigned int spirit_on = OFF;
 static volatile uint8_t receiving_packet = 0;
-static uint8_t nTxIndex = 0;
-static uint8_t nResidualPayloadLength = 0;
 
-/* 
-* The buffers which hold incoming data.
-* The +1 because of the first byte, 
-* which will contain the length of the packet.
-*/
-static uint8_t spirit_rxbuf[MAX_PACKET_LEN+1];
-static uint8_t spirit_txbuf[MAX_PACKET_LEN+1-SPIRIT_MAX_FIFO_LEN];
+/* RX and TX buffers. Since MAX_PACKET_LEN may be larger than the Spirit1 TXFIFO,
+ * we need to buffer outgoing packets. */
+#define MAX_PACKET_LEN PACKETBUF_SIZE
+static volatile uint16_t spirit_rxbuf_len = 0;
+static uint8_t spirit_rxbuf[MAX_PACKET_LEN];
+static volatile uint8_t spirit_txbuf_has_data = 0;
+static uint8_t spirit_txbuf[MAX_PACKET_LEN];
+
+#define FIFO_BATCH_SIZE 50 /* Number of bytes written/read from FIFOs each iteration. */
 
 #if NULLRDC_CONF_802154_AUTOACK
 #define ACK_LEN 3
 static int wants_an_ack = 0; /* The packet sent expects an ack */
 static int just_got_an_ack = 0; /* Interrupt callback just detected an ack */
 //#define ACKPRINTF printf
-#define ACKPRINTF
+#define ACKPRINTF(...)
 #endif /* NULLRDC_CONF_802154_AUTOACK */
 
-/*---------------------------------------------------------------------------*/
 
-static int packet_is_prepared = 0;
+
 /*---------------------------------------------------------------------------*/
 PROCESS(spirit_radio_process, "SPIRIT radio driver");
 /*---------------------------------------------------------------------------*/
@@ -274,10 +268,11 @@ spirit_radio_init(void)
   SpiritIrqClearStatus();
   SpiritIrq(TX_DATA_SENT, S_ENABLE);
   SpiritIrq(RX_DATA_READY,S_ENABLE);
-  SpiritIrq(VALID_SYNC,S_ENABLE);
   SpiritIrq(RX_DATA_DISC, S_ENABLE);
   SpiritIrq(TX_FIFO_ERROR, S_ENABLE);
   SpiritIrq(RX_FIFO_ERROR, S_ENABLE);
+  SpiritIrq(RX_FIFO_ALMOST_FULL, S_ENABLE);
+
 
   /* Configure Spirit1 */
   SpiritRadioPersistenRx(S_ENABLE);
@@ -293,8 +288,8 @@ spirit_radio_init(void)
 /*  SpiritCmdStrobeCommand(SPIRIT1_STROBE_STANDBY);*/
 /*  SpiritCmdStrobeStandby();*/
   spirit_on = OFF;
-  CLEAR_RXBUF();
-  CLEAR_TXBUF();
+  spirit_rxbuf_len = 0; /* clear RX buf */
+  spirit_txbuf_has_data = 0; /* clear TX buf */
   
   /* Initializes the mcu pin as input, used for IRQ */
   SdkEvalM2SGpioInit(M2S_GPIO_0, M2S_MODE_EXTI_IN);
@@ -317,17 +312,9 @@ static int
 spirit_radio_prepare(const void *payload, unsigned short payload_len)
 {
   PRINTF("Spirit1: prep %u\n", payload_len);
-  packet_is_prepared = 0;
 
   /* Checks if the payload length is supported */
   if(payload_len > MAX_PACKET_LEN) {
-    return RADIO_TX_ERR;
-  }
-  
-  /* Waits the end of a still running spirit_radio_transmit */
-  BUSYWAIT_UNTIL(IS_TXBUF_EMPTY(), TX_WAIT_PCKT_PERIOD * RTIMER_SECOND/1000);
-  if(!IS_TXBUF_EMPTY()) {
-    PRINTF("PREPARE OUT ERR\n");
     return RADIO_TX_ERR;
   }
 
@@ -344,14 +331,32 @@ spirit_radio_prepare(const void *payload, unsigned short payload_len)
   }
 #endif /* NULLRDC_CONF_802154_AUTOACK */
 
+  IRQ_DISABLE();
+  SpiritIrqClearStatus();
+  spirit1_strobe(SPIRIT1_STROBE_SABORT);
+  BUSYWAIT_UNTIL(0, RTIMER_SECOND/2500);
+  spirit1_strobe(SPIRIT1_STROBE_READY);
+  BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_READY, 1 * RTIMER_SECOND/1000);
+  spirit1_strobe(SPIRIT1_STROBE_RX);
+  BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_RX, 1 * RTIMER_SECOND/1000);
+  IRQ_ENABLE();
+
+  /* Buffer outgoing data */
+  memcpy(spirit_txbuf, payload, payload_len);
+  spirit_txbuf_has_data = 1;
+
   /* Sets the length of the packet to send */
+  IRQ_DISABLE();
   spirit1_strobe(SPIRIT1_STROBE_FTX);
   SpiritPktBasicSetPayloadLength(payload_len);
-  SpiritSpiWriteLinearFifo(payload_len, (uint8_t *)payload);
+  if(payload_len > FIFO_BATCH_SIZE) {
+    SpiritSpiWriteLinearFifo((uint8_t)FIFO_BATCH_SIZE, spirit_txbuf);
+  } else {
+    SpiritSpiWriteLinearFifo((uint8_t)payload_len, spirit_txbuf);
+  }
+  IRQ_ENABLE();
   
   PRINTF("PREPARE OUT\n");
-
-  packet_is_prepared = 1;
   return RADIO_TX_OK;
 }
 /*---------------------------------------------------------------------------*/
@@ -362,42 +367,67 @@ spirit_radio_transmit(unsigned short payload_len)
   rtimer_clock_t rtimer_txdone, rtimer_rxack;
 
   PRINTF("TRANSMIT IN\n");
-  if(!packet_is_prepared) {
-    return RADIO_TX_ERR;
-  }
 
-  /* Stores the length of the packet to send */
-  /* Others spirit_radio_prepare will be in hold */
-  spirit_txbuf[0] = payload_len;
-  
   /* Puts the SPIRIT1 in TX state */
-  receiving_packet = 0;
-  SpiritSetReadyState(); 
+  SpiritSetReadyState();
   spirit1_strobe(SPIRIT1_STROBE_TX);
   just_got_an_ack = 0;
-  BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_TX, 5 * RTIMER_SECOND/1000);
-  BUSYWAIT_UNTIL(SPIRIT1_STATUS() != SPIRIT1_STATE_TX, 50 * RTIMER_SECOND/1000);
+  BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_TX, 1 * RTIMER_SECOND/1000);
+
+  IRQ_DISABLE();
+  int left = payload_len;
+  int written = 0;
+  if(payload_len < FIFO_BATCH_SIZE) {
+    left = 0;
+    written = payload_len;
+  } else {
+    /* prepared */
+    left -= FIFO_BATCH_SIZE;
+    written += FIFO_BATCH_SIZE;
+  }
+
+  while (left > 0) {
+    if(SPIRIT1_STATUS() != SPIRIT1_STATE_TX) {
+      spirit1_printstatus();
+      break;
+    }
+    if(SpiritLinearFifoReadNumElementsTxFifo() < (96-FIFO_BATCH_SIZE)) {
+      if(left < FIFO_BATCH_SIZE) {
+        SpiritSpiWriteLinearFifo((uint8_t)left, &spirit_txbuf[written]);
+        written += left;
+        left = 0;
+      } else {
+        SpiritSpiWriteLinearFifo((uint8_t)FIFO_BATCH_SIZE, &spirit_txbuf[written]);
+        written += FIFO_BATCH_SIZE;
+        left -= FIFO_BATCH_SIZE;
+      }
+    }
+  }
+  IRQ_ENABLE();
+  spirit_txbuf_has_data = 0; /* clear TX buf */
+  BUSYWAIT_UNTIL(SPIRIT1_STATUS() != SPIRIT1_STATE_TX, 10 * RTIMER_SECOND/1000);
 
   /* Reset radio - needed for immediate RX of ack */
-  CLEAR_TXBUF();
-  CLEAR_RXBUF();
+  IRQ_DISABLE();
   SpiritIrqClearStatus();
   spirit1_strobe(SPIRIT1_STROBE_SABORT);
-  BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_READY, 1 * RTIMER_SECOND/1000);
+  BUSYWAIT_UNTIL(0, RTIMER_SECOND/2500);
   spirit1_strobe(SPIRIT1_STROBE_READY);
   BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_READY, 1 * RTIMER_SECOND/1000);
   spirit1_strobe(SPIRIT1_STROBE_RX);
   BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_RX, 1 * RTIMER_SECOND/1000);
+  IRQ_ENABLE();
 
 #if NULLRDC_CONF_802154_AUTOACK
-  if (wants_an_ack) {
+  if(wants_an_ack) {
     rtimer_txdone = RTIMER_NOW();
-    BUSYWAIT_UNTIL(just_got_an_ack, 15 * RTIMER_SECOND/1000);
+#define ACK_DELAY (4 * RTIMER_SECOND/1000)
+    BUSYWAIT_UNTIL(just_got_an_ack, ACK_DELAY);
     rtimer_rxack = RTIMER_NOW();
 
     if(just_got_an_ack) {
       ACKPRINTF("debug_ack: ack received after %u/%u ticks\n",
-             (uint32_t)(rtimer_rxack - rtimer_txdone), 15 * RTIMER_SECOND/1000);
+             (uint32_t)(rtimer_rxack - rtimer_txdone), ACK_DELAY);
     } else {
       ACKPRINTF("debug_ack: no ack received\n");
     }
@@ -406,9 +436,8 @@ spirit_radio_transmit(unsigned short payload_len)
 
   PRINTF("TRANSMIT OUT\n");
 
-  CLEAR_TXBUF();
+  clock_wait(1);
 
-  packet_is_prepared = 0;
   return RADIO_TX_OK;
 }
 /*---------------------------------------------------------------------------*/
@@ -426,27 +455,29 @@ static int spirit_radio_read(void *buf, unsigned short bufsize)
   PRINTF("READ IN\n");
   
   /* Checks if the RX buffer is empty */
-  if(IS_RXBUF_EMPTY()) { 
+  if(spirit_rxbuf_len == 0) {
+    IRQ_DISABLE();
+    spirit1_strobe(SPIRIT1_STROBE_SABORT);
+    BUSYWAIT_UNTIL(0, RTIMER_SECOND/2500);
+    spirit1_strobe(SPIRIT1_STROBE_READY);
+    BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_READY, 1 * RTIMER_SECOND/1000);
+    spirit1_strobe(SPIRIT1_STROBE_RX);
+    BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_RX, 1 * RTIMER_SECOND/1000);
     PRINTF("READ OUT RX BUF EMPTY\n");
+    IRQ_ENABLE();
     return 0;
   }
   
-  if(bufsize < spirit_rxbuf[0]) { 
-    /* If buf has the correct size */
-    PRINTF("TOO SMALL BUF\n");
+  if(bufsize < spirit_rxbuf_len) {
+    spirit_rxbuf_len = 0; /* clear RX buf */
     return 0;
   } else {
-    /* Copies the packet received */
-    memcpy(buf, spirit_rxbuf + 1, spirit_rxbuf[0]);
-
-    bufsize = spirit_rxbuf[0];
-    CLEAR_RXBUF();
-    
+    int len = spirit_rxbuf_len;
+    memcpy(buf, spirit_rxbuf, spirit_rxbuf_len);
+    spirit_rxbuf_len = 0; /* clear RX buf */
     PRINTF("READ OUT\n");
-    
-    return bufsize;
+    return len;
   }  
-  
 }
 /*---------------------------------------------------------------------------*/
 static int
@@ -512,7 +543,7 @@ static int
 spirit_radio_pending_packet(void)
 {
   PRINTF("PENDING PACKET\n");
-  return !IS_RXBUF_EMPTY();
+  return spirit_rxbuf_len != 0;
 }
 /*---------------------------------------------------------------------------*/
 static int
@@ -544,8 +575,8 @@ spirit_radio_off(void)
     }
 
     spirit_on = OFF;
-    CLEAR_TXBUF();
-    CLEAR_RXBUF(); 
+    spirit_txbuf_has_data = 0; /* clear TX buf */
+    spirit_rxbuf_len = 0; /* clear RX buf */
   }
   PRINTF("Spirit1: off.\n");
   return 0; 
@@ -601,7 +632,6 @@ PROCESS_THREAD(spirit_radio_process, ev, data)
     len = spirit_radio_read(packetbuf_dataptr(), PACKETBUF_SIZE);
 
     if(len > 0) {
-
 #if NULLRDC_CONF_802154_AUTOACK
       /* Check if the packet has an ACK request */
       frame802154_t info154;
@@ -619,24 +649,25 @@ PROCESS_THREAD(spirit_radio_process, ev, data)
               info154.seq
           };
 
+          IRQ_DISABLE();
           spirit1_strobe(SPIRIT1_STROBE_FTX);
           SpiritPktBasicSetPayloadLength((uint16_t) ACK_LEN);
-          SpiritSpiWriteLinearFifo((uint16_t) ACK_LEN, (uint8_t *) ack_frame);
+          SpiritSpiWriteLinearFifo((uint8_t) ACK_LEN, (uint8_t *) ack_frame);
 
           SpiritSetReadyState();
+          IRQ_ENABLE();
           spirit1_strobe(SPIRIT1_STROBE_TX);
           BUSYWAIT_UNTIL(SPIRIT1_STATUS() == SPIRIT1_STATE_TX, 1 * RTIMER_SECOND/1000);
           BUSYWAIT_UNTIL(SPIRIT1_STATUS() != SPIRIT1_STATE_TX, 1 * RTIMER_SECOND/1000);
-
           ACKPRINTF("debug_ack: sent ack %d\n", ack_frame[2]);
         }
       }
 #endif /* NULLRDC_CONF_802154_AUTOACK */
 
-      packetbuf_set_datalen(len);   
+      packetbuf_set_datalen(len);
       NETSTACK_RDC.input();
     }
-    if(!IS_RXBUF_EMPTY()){
+    if(spirit_rxbuf_len != 0){
       process_poll(&spirit_radio_process);
     }
 
@@ -654,13 +685,89 @@ PROCESS_THREAD(spirit_radio_process, ev, data)
   PROCESS_END();
 }
 /*---------------------------------------------------------------------------*/
+static void
+spirit1_interrupt_callback_wrapped(void)
+{
+#define INTPRINTF(...) // PRINTF
+  SpiritIrqs xIrqStatus;
+  SpiritIrqGetStatus(&xIrqStatus);
+  SpiritIrqClearStatus();
+
+  if(xIrqStatus.IRQ_RX_FIFO_ERROR) {
+    INTPRINTF("IRQ_RX_FIFO_ERROR\n");
+    spirit1_strobe(SPIRIT1_STROBE_FRX);
+    return;
+  }
+  if(xIrqStatus.IRQ_TX_FIFO_ERROR) {
+    INTPRINTF("IRQ_TX_FIFO_ERROR\n");
+    spirit1_strobe(SPIRIT1_STROBE_FTX);
+    return;
+  }
+
+  /* RX FIFO is almost full, let's read out the packet data */
+  if(xIrqStatus.IRQ_RX_FIFO_ALMOST_FULL || xIrqStatus.IRQ_RX_DATA_READY) {
+    uint16_t read = 0; /* Bytes read from RXFIFO */
+    INTPRINTF("IRQ_RX_FIFO_ALMOST_FULL\n");
+
+    if(spirit_rxbuf_len > 0) {
+      /* We have an unprocessed received packet and have to drop the new packet */
+      /* Note that this is normal behavior for long packets: we expect to get a
+       * RX_DATA_READY interrupt after the RX_FIFO_ALMOST_FULL. */
+      process_poll(&spirit_radio_process);
+      spirit1_strobe(SPIRIT1_STROBE_FRX);
+      return;
+    }
+
+    receiving_packet = 1;
+
+    /* Read from RXFIFO */
+    uint16_t in_rxfifo = SpiritLinearFifoReadNumElementsRxFifo();
+    while(in_rxfifo > 0) {
+      if(in_rxfifo == 1) {
+        /* Read the very last byte */
+        SpiritSpiReadLinearFifo(in_rxfifo, &spirit_rxbuf[read]);
+        read += 1;
+        spirit_rxbuf_len = read; /* Set packet size - we are done! */
+        break;
+      }
+
+      /* Read RXFIFO, but save a single byte */
+      in_rxfifo--;
+      SpiritSpiReadLinearFifo(in_rxfifo, &spirit_rxbuf[read]);
+      read += in_rxfifo;
+      in_rxfifo = SpiritLinearFifoReadNumElementsRxFifo();
+    }
+    if(spirit_rxbuf_len == 0) {
+      /* We didn't read the last byte, but aborted prematurely. Discard packet. */
+    }
+
+#if NULLRDC_CONF_802154_AUTOACK
+    if(spirit_rxbuf_len == ACK_LEN) {
+      /* For debugging purposes we assume this is an ack for us */
+      just_got_an_ack = 1;
+    }
+#endif /* NULLRDC_CONF_802154_AUTOACK */
+
+    INTPRINTF("RX OK %u %u %u\n", spirit_rxbuf_len, read, left);
+    spirit1_strobe(SPIRIT1_STROBE_FRX);
+    process_poll(&spirit_radio_process);
+    receiving_packet = 0;
+  }
+
+  /* The IRQ_TX_DATA_SENT notifies the packet received. Puts the SPIRIT1 in RX */
+  if(xIrqStatus.IRQ_TX_DATA_SENT) {
+    spirit1_strobe(SPIRIT1_STROBE_RX);
+    /*SpiritCmdStrobeRx();*/
+    INTPRINTF("SENT\n");
+    spirit_txbuf_has_data = 0; /* clear TX buf */
+    return;
+  }
+}
+/*---------------------------------------------------------------------------*/
 void
 spirit1_interrupt_callback(void)
 {
-#define INTPRINTF // PRINTF
-  SpiritIrqs xIrqStatus;
-
-  if (SpiritSPIBusy() || interrupt_callback_in_progress) {
+  if(SpiritSPIBusy() || interrupt_callback_in_progress) {
     process_poll(&spirit_radio_process);
     interrupt_callback_wants_poll = 1;
     return;
@@ -668,70 +775,8 @@ spirit1_interrupt_callback(void)
   interrupt_callback_wants_poll = 0;
   interrupt_callback_in_progress = 1;
 
-  /* get interrupt source from radio */
-  SpiritIrqGetStatus(&xIrqStatus);
-  SpiritIrqClearStatus();
-
-  if(xIrqStatus.IRQ_RX_FIFO_ERROR) {
-    receiving_packet = 0;
-    interrupt_callback_in_progress = 0;
-    spirit1_strobe(SPIRIT1_STROBE_FRX);
-    return;
-  }
-  if(xIrqStatus.IRQ_TX_FIFO_ERROR) {
-    receiving_packet = 0;
-    interrupt_callback_in_progress = 0;
-    spirit1_strobe(SPIRIT1_STROBE_FTX);
-    return;
-  }
-
-  /* The IRQ_VALID_SYNC is used to notify a new packet is coming */
-  if(xIrqStatus.IRQ_VALID_SYNC) {
-    INTPRINTF("SYNC\n");
-    receiving_packet = 1;
-  }
-
-  /* The IRQ_TX_DATA_SENT notifies the packet received. Puts the SPIRIT1 in RX */
-  if(xIrqStatus.IRQ_TX_DATA_SENT) {
-    spirit1_strobe(SPIRIT1_STROBE_RX);
-/*    SpiritCmdStrobeRx();*/
-    INTPRINTF("SENT\n");
-    CLEAR_TXBUF();
-    interrupt_callback_in_progress = 0;
-    return;
-  }
-
-  /* The IRQ_RX_DATA_READY notifies a new packet arrived */
-  if(xIrqStatus.IRQ_RX_DATA_READY) {
-    SpiritSpiReadLinearFifo(SpiritLinearFifoReadNumElementsRxFifo(), &spirit_rxbuf[1]);
-    spirit_rxbuf[0] = SpiritPktBasicGetReceivedPktLength();
-    spirit1_strobe(SPIRIT1_STROBE_FRX);
-
-    INTPRINTF("RECEIVED\n");
-
-   	process_poll(&spirit_radio_process);
-
-    receiving_packet = 0;
-    
-#if NULLRDC_CONF_802154_AUTOACK
-    if (spirit_rxbuf[0] == ACK_LEN) {
-      /* For debugging purposes we assume this is an ack for us */
-      just_got_an_ack = 1;
-    }
-#endif /* NULLRDC_CONF_802154_AUTOACK */
-
-    interrupt_callback_in_progress = 0;
-    return;
-  }
-  
-  if(xIrqStatus.IRQ_RX_DATA_DISC) {
-    spirit1_strobe(SPIRIT1_STROBE_FRX);
-    CLEAR_RXBUF();
-    INTPRINTF("DISC\n");
-    receiving_packet = 0;
-  }
+  spirit1_interrupt_callback_wrapped();
 
   interrupt_callback_in_progress = 0;
 }
-
 /*---------------------------------------------------------------------------*/

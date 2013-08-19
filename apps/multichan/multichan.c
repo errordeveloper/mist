@@ -40,14 +40,6 @@
 #include <stdio.h>
 #include "lib/random.h"
 
-#if CONTIKI_TARGET_EXP1120
-#include "cc11xx.h" /* XXX */
-#elif CONTIKI_TARGET_EXP1101
-#include "cc1101.h" /* XXX */
-#else
-#include "dev/cc2420.h" /* XXX */
-#endif /* CONTIKI_TARGET_EXP1120 */
-
 #if UIP_CONF_IPV6_RPL
 #define WITH_RPL_AUTHORITY 1
 #endif
@@ -121,37 +113,19 @@ static int already_received_reply = 0;
 
 static int send_scan_reply(void);
 
+/* Example: #define MULTICHAN_CONF_SET_CHANNEL(x) cc11xx_channel_set(x) */
 #ifdef MULTICHAN_CONF_SET_CHANNEL
 #define SET_CHANNEL(x) MULTICHAN_CONF_SET_CHANNEL(x)
-#define READ_RSSI(x) MULTICHAN_CONF_READ_RSSI(x)
 #else /* MULTICHAN_CONF_SET_CHANNEL */
+#error Error: Platform lacks #define MULTICHAN_CONF_SET_CHANNEL. See multichan.c for example.
+#endif
 
-#if CONTIKI_TARGET_COOJA
-
-#define SET_CHANNEL(x) radio_set_channel(x)
-#define READ_RSSI(x) 0 /* not implemented */
-
-#elif CONTIKI_TARGET_EXP1120
-
-signed char cc11xx_read_rssi(void);
-void cc11xx_channel_set(uint8_t c);
-#define SET_CHANNEL(x) cc11xx_channel_set(x)
-#define READ_RSSI(x) cc11xx_read_rssi()
-
-#elif CONTIKI_TARGET_EXP1101
-
-#define SET_CHANNEL(x) cc1101_channel_set(x)
-#define READ_RSSI(x) 0 /* not implemented */
-
-#else
-
-#define SET_CHANNEL(x) cc2420_set_channel(x)
-#define READ_RSSI(x) 0 /* not implemented */
-
-#endif /* CONTIKI_TARGET_COOJA */
-
-#endif /* MULTICHAN_CONF_SET_CHANNEL */
-
+/* Example: #define MULTICHAN_CONF_READ_RSSI(x) cc11xx_read_rssi() */
+#ifdef MULTICHAN_CONF_READ_RSSI
+#define READ_RSSI(x) MULTICHAN_CONF_READ_RSSI(x)
+#else /* MULTICHAN_CONF_READ_RSSI */
+#error Error: Platform lacks #define MULTICHAN_CONF_READ_RSSI. See multichan.c for example.
+#endif
 
 
 #define PKT_NORMAL 252

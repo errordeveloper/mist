@@ -34,24 +34,78 @@
 #include "contiki-net.h"
 
 #include "net/rpl/rpl.h"
+#include "net/rpl/rpl-private.h"
 
 #include "simple-rpl.h"
 
-#define DEBUG DEBUG_FULL//NONE
+#define DEBUG DEBUG_NONE
 #include "net/uip-debug.h"
 
-#define RPL_DAG_GRACE_PERIOD (CLOCK_SECOND * 60 * 1)
+#define RPL_DAG_GRACE_PERIOD (CLOCK_SECOND * 20 * 1)
 
 static struct uip_ds6_notification n;
 static uint8_t to_become_root;
 static struct ctimer c;
 /*---------------------------------------------------------------------------*/
+const uip_ipaddr_t *
+simple_rpl_global_address(void)
+{
+  int i;
+  uint8_t state;
+  uip_ipaddr_t *ipaddr = NULL;
+
+  for(i = 0; i < UIP_DS6_ADDR_NB; i++) {
+    state = uip_ds6_if.addr_list[i].state;
+    if(uip_ds6_if.addr_list[i].isused &&
+       state == ADDR_PREFERRED &&
+       !uip_is_addr_link_local(&uip_ds6_if.addr_list[i].ipaddr)) {
+      ipaddr = &uip_ds6_if.addr_list[i].ipaddr;
+    }
+  }
+  return ipaddr;
+}
+/*---------------------------------------------------------------------------*/
 static void
 create_dag_callback(void *ptr)
 {
-  if(to_become_root) {
-    simple_rpl_init_dag_immediately();
-    to_become_root = 0;
+  const uip_ipaddr_t *root, *ipaddr;
+
+  root = simple_rpl_root();
+  ipaddr = simple_rpl_global_address();
+
+  if(root == NULL || uip_ipaddr_cmp(root, ipaddr)) {
+    /* The RPL network we are joining is one that we created, so we
+       become root. */
+    if(to_become_root) {
+      simple_rpl_init_dag_immediately();
+      to_become_root = 0;
+    }
+  } else {
+    rpl_dag_t *dag;
+
+    dag = rpl_get_any_dag();
+#if DEBUG
+    printf("Found a network we did not create\n");
+    printf("version %d grounded %d preference %d used %d joined %d rank %d\n",
+           dag->version, dag->grounded,
+           dag->preference, dag->used,
+           dag->joined, dag->rank);
+#endif /* DEBUG */
+
+    /* We found a RPL network that we did not create so we just join
+       it without becoming root. But if the network has an infinite
+       rank, we assume the network has broken, and we become the new
+       root of the network. */
+
+    if(dag->rank == INFINITE_RANK) {
+      if(to_become_root) {
+        simple_rpl_init_dag_immediately();
+        to_become_root = 0;
+      }
+    }
+
+    /* Try again after the grace period */
+    ctimer_set(&c, RPL_DAG_GRACE_PERIOD, create_dag_callback, NULL);
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -60,10 +114,12 @@ route_callback(int event, uip_ipaddr_t *route, uip_ipaddr_t *ipaddr,
                int numroutes)
 {
   if(event == UIP_DS6_NOTIFICATION_DEFRT_ADD) {
-    if(to_become_root) {
-      ctimer_set(&c, 0, create_dag_callback, NULL);
-      /*      simple_rpl_init_dag_immediately();
-              to_become_root = 0;*/
+    if(route != NULL && ipaddr != NULL &&
+       !uip_is_addr_unspecified(route) &&
+       !uip_is_addr_unspecified(ipaddr)) {
+      if(to_become_root) {
+        ctimer_set(&c, 0, create_dag_callback, NULL);
+      }
     }
   }
 }
@@ -75,7 +131,9 @@ set_global_address(void)
   int i;
   uint8_t state;
 
-  uip_ip6addr(&ipaddr, 0xaaaa, 0, 0, 0, 0, 0, 0, 0);
+  /* Assign a unique local address (RFC4193,
+     http://tools.ietf.org/html/rfc4193). */
+  uip_ip6addr(&ipaddr, 0xfc00, 0, 0, 0, 0, 0, 0, 0);
   uip_ds6_set_addr_iid(&ipaddr, &uip_lladdr);
   uip_ds6_addr_add(&ipaddr, 0, ADDR_AUTOCONF);
 
@@ -100,7 +158,7 @@ simple_rpl_init(void)
   uip_ds6_notification_add(&n, route_callback);
 }
 /*---------------------------------------------------------------------------*/
-void
+int
 simple_rpl_init_dag_immediately(void)
 {
   struct uip_ds6_addr *root_if;
@@ -111,7 +169,8 @@ simple_rpl_init_dag_immediately(void)
   for(i = 0; i < UIP_DS6_ADDR_NB; i++) {
     state = uip_ds6_if.addr_list[i].state;
     if(uip_ds6_if.addr_list[i].isused &&
-       state == ADDR_PREFERRED) {
+       state == ADDR_PREFERRED &&
+       !uip_is_addr_link_local(&uip_ds6_if.addr_list[i].ipaddr)) {
       ipaddr = &uip_ds6_if.addr_list[i].ipaddr;
     }
   }
@@ -134,14 +193,17 @@ simple_rpl_init_dag_immediately(void)
         dag->instance->def_route = NULL;
       }
 
-      uip_ip6addr(&prefix, 0xaaaa, 0, 0, 0, 0, 0, 0, 0);
+      uip_ip6addr(&prefix, 0xfc00, 0, 0, 0, 0, 0, 0, 0);
       rpl_set_prefix(dag, &prefix, 64);
       PRINTF("simple_rpl_init_dag: created a new RPL dag\n");
+      return 0;
     } else {
       PRINTF("simple_rpl_init_dag: failed to create a new RPL DAG\n");
+      return -1;
     }
   } else {
     PRINTF("simple_rpl_init_dag: failed to create a new RPL DAG, no preferred IP address found\n");
+    return -2;
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -150,6 +212,11 @@ simple_rpl_init_dag(void)
 {
   ctimer_set(&c, RPL_DAG_GRACE_PERIOD, create_dag_callback, NULL);
   to_become_root = 1;
+
+  /* We set a default route of NULL. This means that we want our
+     default route to be the fallback interface, regardless if we
+     learn new default routes from the RPL network. */
+  uip_ds6_defrt_add(NULL, 0);
 }
 /*---------------------------------------------------------------------------*/
 void
@@ -166,5 +233,30 @@ void
 simple_rpl_local_repair(void)
 {
   rpl_local_repair(rpl_get_instance(RPL_DEFAULT_INSTANCE));
+}
+/*---------------------------------------------------------------------------*/
+const uip_ipaddr_t *
+simple_rpl_parent(void)
+{
+  rpl_dag_t *dag;
+
+  dag = rpl_get_any_dag();
+  if(dag != NULL && dag->preferred_parent != NULL) {
+    return rpl_get_parent_ipaddr(dag->preferred_parent);
+  }
+  return NULL;
+}
+/*---------------------------------------------------------------------------*/
+const uip_ipaddr_t *
+simple_rpl_root(void)
+{
+  rpl_dag_t *dag;
+
+  dag = rpl_get_any_dag();
+  if(dag != NULL) {
+    return &dag->dag_id;
+  }
+
+  return NULL;
 }
 /*---------------------------------------------------------------------------*/

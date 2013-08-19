@@ -69,7 +69,7 @@
 #define PROGRESS(x)
 
 
-static void raw_send(void *buf, int len);
+void raw_send(void *buf, int len);
 
 struct pcap;
 
@@ -224,7 +224,7 @@ init_pcap(struct in_addr addr)
 static void
 setethaddr(struct uip_eth_addr *a)
 {
-  memcpy(&uip_ethaddr, a, sizeof(struct uip_eth_addr));
+  memcpy(&uip_lladdr, a, sizeof(struct uip_eth_addr));
 }
 /*---------------------------------------------------------------------------*/
 static void
@@ -460,7 +460,7 @@ arp_out(struct ethip_hdr *iphdr, int len)
     memcpy(iphdr->ethhdr.dest.addr, tabptr->ethaddr.addr, 6);
     }
 #endif /* 0 */
-  memcpy(iphdr->ethhdr.src.addr, uip_ethaddr.addr, 6);
+  memcpy(iphdr->ethhdr.src.addr, uip_lladdr.addr, 6);
 
   iphdr->ethhdr.type = UIP_HTONS(UIP_ETHTYPE_IP);
 
@@ -489,8 +489,8 @@ do_arp(void *buf, int len)
 	hdr->opcode = UIP_HTONS(ARP_REPLY);
 
 	memcpy(&hdr->dhwaddr.addr, &hdr->shwaddr.addr, 6);
-	memcpy(&hdr->shwaddr.addr, &uip_ethaddr.addr, 6);
-	memcpy(&hdr->ethhdr.src.addr, &uip_ethaddr.addr, 6);
+	memcpy(&hdr->shwaddr.addr, &uip_lladdr.addr, 6);
+	memcpy(&hdr->ethhdr.src.addr, &uip_lladdr.addr, 6);
 	memcpy(&hdr->ethhdr.dest.addr, &hdr->dhwaddr.addr, 6);
 
 	uip_ipaddr_copy(&tmpaddr, &hdr->dipaddr);
@@ -602,7 +602,7 @@ wpcap_start(char *ethcardaddr, char *slipnetaddr, char *slipnetmask, int log)
 }
 /*---------------------------------------------------------------------------*/
 uint16_t
-wpcap_poll(char **buf)
+wpcap_poll(char **buf, int eth)
 {
   struct pcap_pkthdr *packet_header;
   unsigned char *packet;
@@ -621,6 +621,13 @@ wpcap_poll(char **buf)
 
   CopyMemory(*buf, packet, packet_header->caplen);
   len = packet_header->caplen;
+
+  if(eth) {
+    /* poll requested us to return the raw ethernet packet */
+    return len;
+  }
+
+
   buf2 = do_arp(*buf, len);
   if(buf2 == NULL) {
     return 0;
@@ -643,7 +650,7 @@ wpcap_send(void *buf, int len)
   raw_send(buf2, len);
 }
 /*---------------------------------------------------------------------------*/
-static void
+void
 raw_send(void *buf, int len)
 {
   /*  printf("sending len %d\n", len);*/

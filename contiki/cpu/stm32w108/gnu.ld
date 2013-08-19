@@ -13,14 +13,13 @@ GROUP(
 These are used by the startup in order to allocate stacks for the different modes.
 */
 
-__Stack_Size = 0x500 ;
+__Stack_Size = 0x380 ;
 
 PROVIDE ( _Stack_Size = __Stack_Size ) ;
 
 __Stack_Init = 0x20000000;
 
 _estack = __Stack_Init + __Stack_Size;
-
 
 /*"PROVIDE" allows to easily override these values from an object file or the commmand line.*/
 PROVIDE ( _Stack_Init = __Stack_Init ) ;

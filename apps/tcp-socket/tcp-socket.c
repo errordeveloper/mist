@@ -48,6 +48,14 @@ LIST(socketlist);
 PROCESS(tcp_socket_process, "TCP socket process");
 /*---------------------------------------------------------------------------*/
 static void
+call_event(struct tcp_socket *s, tcp_socket_event_t event)
+{
+  if(s != NULL && s->event_callback != NULL) {
+    s->event_callback(s, s->ptr, event);
+  }
+}
+/*---------------------------------------------------------------------------*/
+static void
 senddata(struct tcp_socket *s)
 {
   int len;
@@ -78,6 +86,8 @@ acked(struct tcp_socket *s)
     }
     s->output_data_len -= s->output_data_send_nxt;
     s->output_data_send_nxt = 0;
+
+    call_event(s, TCP_SOCKET_DATA_SENT);
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -89,6 +99,12 @@ newdata(struct tcp_socket *s)
   len = uip_datalen();
   dataptr = uip_appdata;
 
+  /* We have a segment with data coming in. We copy as much data as
+     possible into the input buffer and call the input callback
+     function. The input callback returns the number of bytes that
+     should be retained in the buffer, or zero if all data should be
+     consumed. If there is data to be retained, the highest bytes of
+     data are copied down into the input buffer. */
   do {
     copylen = MIN(len, s->input_data_maxlen);
     memcpy(s->input_data_ptr, dataptr, copylen);
@@ -99,26 +115,19 @@ newdata(struct tcp_socket *s)
       bytesleft = 0;
     }
     if(bytesleft > 0) {
-      printf("tcp: newdata, bytesleft > 0 not implemented\n");
+      printf("tcp: newdata, bytesleft > 0 (%d) not implemented\n", bytesleft);
     }
     dataptr += copylen;
     len -= copylen;
+
   } while(len > 0);
-}
-/*---------------------------------------------------------------------------*/
-static void
-call_event(struct tcp_socket *s, tcp_socket_event_t event)
-{
-  if(s != NULL && s->event_callback != NULL) {
-    s->event_callback(s, s->ptr, event);
-  }
 }
 /*---------------------------------------------------------------------------*/
 static void
 relisten(struct tcp_socket *s)
 {
   if(s != NULL && s->listen_port != 0) {
-    s->is_listening = 1;
+    s->flags |= TCP_SOCKET_FLAGS_LISTENING;
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -137,10 +146,10 @@ appcall(void *state)
       for(s = list_head(socketlist);
 	  s != NULL;
 	  s = list_item_next(s)) {
-	if(s->is_listening != 0 &&
+	if((s->flags & TCP_SOCKET_FLAGS_LISTENING) != 0 &&
 	   s->listen_port != 0 &&
 	   s->listen_port == uip_htons(uip_conn->lport)) {
-	  s->is_listening = 0;
+	  s->flags &= ~TCP_SOCKET_FLAGS_LISTENING;
 	  tcp_markconn(uip_conn, s);
 	  call_event(s, TCP_SOCKET_CONNECTED);
 	  break;
@@ -153,6 +162,9 @@ appcall(void *state)
     if(s == NULL) {
       uip_abort();
     } else {
+      if(uip_newdata()) {
+        newdata(s);
+      }
       senddata(s);
     }
     return;
@@ -172,7 +184,7 @@ appcall(void *state)
     uip_abort();
     return;
   }
-  
+
   if(uip_acked()) {
     acked(s);
   }
@@ -186,6 +198,14 @@ appcall(void *state)
     senddata(s);
   } else if(uip_poll()) {
     senddata(s);
+  }
+
+  if(s->output_data_len == 0 && s->flags & TCP_SOCKET_FLAGS_CLOSING) {
+    s->flags &= ~TCP_SOCKET_FLAGS_CLOSING;
+    uip_close();
+    tcp_markconn(uip_conn, NULL);
+    call_event(s, TCP_SOCKET_CLOSED);
+    relisten(s);
   }
 
   if(uip_closed()) {
@@ -239,7 +259,7 @@ tcp_socket_register(struct tcp_socket *s, void *ptr,
   list_add(socketlist, s);
 
   s->listen_port = 0;
-  s->is_listening = 0;
+  s->flags = TCP_SOCKET_FLAGS_NONE;
 }
 /*---------------------------------------------------------------------------*/
 int
@@ -266,7 +286,18 @@ tcp_socket_listen(struct tcp_socket *s,
   PROCESS_CONTEXT_BEGIN(&tcp_socket_process);
   tcp_listen(uip_htons(port));
   PROCESS_CONTEXT_END();
-  s->is_listening = 1;
+  s->flags |= TCP_SOCKET_FLAGS_LISTENING;
+  return 0;
+}
+/*---------------------------------------------------------------------------*/
+int
+tcp_socket_unlisten(struct tcp_socket *s)
+{
+  PROCESS_CONTEXT_BEGIN(&tcp_socket_process);
+  tcp_unlisten(uip_htons(s->listen_port));
+  PROCESS_CONTEXT_END();
+  s->listen_port = 0;
+  s->flags &= ~TCP_SOCKET_FLAGS_LISTENING;
   return 0;
 }
 /*---------------------------------------------------------------------------*/
@@ -288,5 +319,12 @@ tcp_socket_send_str(struct tcp_socket *s,
              const char *str)
 {
   return tcp_socket_send(s, (const uint8_t *)str, strlen(str));
+}
+/*---------------------------------------------------------------------------*/
+int
+tcp_socket_close(struct tcp_socket *s)
+{
+  s->flags |= TCP_SOCKET_FLAGS_CLOSING;
+  return 1;
 }
 /*---------------------------------------------------------------------------*/

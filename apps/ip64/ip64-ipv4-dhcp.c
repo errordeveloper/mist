@@ -76,6 +76,7 @@ PROCESS_THREAD(ip64_ipv4_dhcp_process, ev, data)
 void
 ip64_dhcpc_configured(const struct ip64_dhcpc_state *s)
 {
+  uip_ip6addr_t ip6dnsaddr;
   printf("DHCP Configured with %d.%d.%d.%d\n",
 	 s->ipaddr.u8[0], s->ipaddr.u8[1],
 	 s->ipaddr.u8[2], s->ipaddr.u8[3]);
@@ -83,7 +84,8 @@ ip64_dhcpc_configured(const struct ip64_dhcpc_state *s)
   ip64_set_hostaddr((uip_ip4addr_t *)&s->ipaddr);
   ip64_set_netmask((uip_ip4addr_t *)&s->netmask);
   ip64_set_draddr((uip_ip4addr_t *)&s->default_router);
-  //  resolv_conf(&s->dnsaddr);
+  ip64_addr_4to6(&s->dnsaddr, &ip6dnsaddr);
+  //  mdns_conf(&ip6dnsaddr);
 }
 /*---------------------------------------------------------------------------*/
 void

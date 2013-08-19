@@ -34,6 +34,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#define DEBUG 0
+#if DEBUG
+#define PRINTF(...) printf(__VA_ARGS__)
+#else
+#define PRINTF(...)
+#endif
+
 #define EIE   0x1b
 #define EIR   0x1c
 #define ESTAT 0x1d
@@ -41,6 +48,7 @@
 #define ECON1 0x1f
 
 #define ESTAT_CLKRDY 0x01
+#define ESTAT_TXABRT 0x02
 
 #define ECON1_RXEN   0x04
 #define ECON1_TXRTS  0x08
@@ -99,13 +107,12 @@
 #define MAX_MAC_LENGTH 1518
 
 #define MAADRX_BANK 0x03
-#define MAADR1 0x00
-#define MAADR0 0x01
-#define MAADR3 0x02
-#define MAADR2 0x03
-#define MAADR5 0x04
-#define MAADR4 0x05
-
+#define MAADR1 0x04 /* MAADR<47:40> */
+#define MAADR2 0x05 /* MAADR<39:32> */
+#define MAADR3 0x02 /* MAADR<31:24> */
+#define MAADR4 0x03 /* MAADR<23:16> */
+#define MAADR5 0x00 /* MAADR<15:8> */
+#define MAADR6 0x01 /* MAADR<7:0> */
 
 #define EPKTCNT_BANK 0x01
 #define ERXFCON 0x18
@@ -116,6 +123,14 @@
 #define ERXFCON_CRCEN 0x20
 #define ERXFCON_MCEN  0x02
 #define ERXFCON_BCEN  0x01
+
+
+PROCESS(enc_watchdog_process, "Enc28j60 watchdog");
+
+static uint8_t initialized = 0;
+static uint8_t enc_mac_addr[6];
+static int received_packets = 0;
+static int sent_packets = 0;
 
 /*---------------------------------------------------------------------------*/
 static uint8_t
@@ -202,9 +217,11 @@ softreset(void)
   enc28j60_arch_spi_deselect();
 }
 /*---------------------------------------------------------------------------*/
-void
-enc28j60_init(uint8_t *mac_addr)
+static void
+reset(void)
 {
+  PRINTF("enc28j60: resetting chip\n");
+
   enc28j60_arch_spi_init();
 
   /*
@@ -237,7 +254,7 @@ enc28j60_init(uint8_t *mac_addr)
     ERXRDPT registers should additionally be programmed with the same
     value. To program ERXRDPT, the host controller must write to
     ERXRDPTL first, followed by ERXRDPTH.  See Section 7.2.4 “Freeing
-    Receive Buffer Space” for more information.
+    Receive Buffer Space for more information
 
     6.2 Transmission Buffer
 
@@ -253,7 +270,7 @@ enc28j60_init(uint8_t *mac_addr)
     6.3 Receive Filters
 
     The appropriate receive filters should be enabled or disabled by
-    writing to the ERXFCON register. See Section 8.0 “Receive Filters”
+    writing to the ERXFCON register. See Section 8.0 “Receive Filters
     for information on how to configure it.
 
     6.4 Waiting For OST
@@ -262,7 +279,7 @@ enc28j60_init(uint8_t *mac_addr)
     following a Power-on Reset, the ESTAT.CLKRDY bit should be polled
     to make certain that enough time has elapsed before proceeding to
     modify the MAC and PHY registers. For more information on the OST,
-    see Section 2.2 “Oscillator Start-up Timer”.
+    see Section 2.2 “Oscillator Start-up Timer.
   */
 
   /* Wait for OST */
@@ -283,7 +300,6 @@ enc28j60_init(uint8_t *mac_addr)
 
   /* Receive filters */
   setregbank(EPKTCNT_BANK);
-
   /*  writereg(ERXFCON, ERXFCON_UCEN | ERXFCON_CRCEN |
       ERXFCON_MCEN | ERXFCON_BCEN);*/
   /* XXX: can't seem to get the unicast filter to work right now,
@@ -369,12 +385,16 @@ enc28j60_init(uint8_t *mac_addr)
 
   /* Set MAC address */
   setregbank(MAADRX_BANK);
-  writereg(MAADR0, mac_addr[0]);
-  writereg(MAADR1, mac_addr[1]);
-  writereg(MAADR2, mac_addr[2]);
-  writereg(MAADR3, mac_addr[3]);
-  writereg(MAADR4, mac_addr[4]);
-  writereg(MAADR5, mac_addr[5]);
+  writereg(MAADR6, enc_mac_addr[5]);
+  writereg(MAADR5, enc_mac_addr[4]);
+  writereg(MAADR4, enc_mac_addr[3]);
+  writereg(MAADR3, enc_mac_addr[2]);
+  writereg(MAADR2, enc_mac_addr[1]);
+  writereg(MAADR1, enc_mac_addr[0]);
+
+  /* Receive filters */
+  setregbank(EPKTCNT_BANK);
+  writereg(ERXFCON, ERXFCON_UCEN | ERXFCON_CRCEN | ERXFCON_BCEN);
 
   /*
     6.6 PHY Initialization Settings
@@ -383,7 +403,7 @@ enc28j60_init(uint8_t *mac_addr)
     registers may also require configuration.  The PHCON1.PDPXMD bit
     partially controls the device’s half/full-duplex
     configuration. Normally, this bit is initialized correctly by the
-    external circuitry (see Section 2.6 “LED Configuration”). If the
+    external circuitry (see Section 2.6 “LED Configuration). If the
     external circuitry is not present or incorrect, however, the host
     controller must program the bit properly. Alternatively, for an
     externally configurable system, the PDPXMD bit may be read and the
@@ -398,7 +418,7 @@ enc28j60_init(uint8_t *mac_addr)
     LEDA and LEDB. If an application requires a LED configuration
     other than the default, PHLCON must be altered to match the new
     requirements. The settings for LED operation are discussed in
-    Section 2.6 “LED Configuration”. The PHLCON register is shown in
+    Section 2.6 “LED Configuration. The PHLCON register is shown in
     Register 2-2 (page 9).
   */
 
@@ -411,10 +431,31 @@ enc28j60_init(uint8_t *mac_addr)
   writereg(ECON1, ECON1_RXEN);
 }
 /*---------------------------------------------------------------------------*/
+void
+enc28j60_init(uint8_t *mac_addr)
+{
+  if(initialized) {
+    return;
+  }
+
+  memcpy(enc_mac_addr, mac_addr, 6);
+
+  /* Start watchdog process */
+  process_start(&enc_watchdog_process, NULL);
+
+  reset();
+
+  initialized = 1;
+}
+/*---------------------------------------------------------------------------*/
 int
 enc28j60_send(uint8_t *data, uint16_t datalen)
 {
-  int i;
+  int padding = 0;
+
+  if(!initialized) {
+    return -1;
+  }
 
   /*
     1. Appropriately program the ETXST pointer to point to an unused
@@ -437,9 +478,6 @@ enc28j60_send(uint8_t *data, uint16_t datalen)
        ECON1.TXRTS.
   */
 
-  /* Wait for any previous transmission to complete */
-  //  while(readreg(ECON1) & ECON1_TXRTS);
-
   setregbank(ERXTX_BANK);
   /* Set up the transmit buffer pointer */
   writereg(ETXSTL, TX_BUF_START & 0xff);
@@ -450,13 +488,30 @@ enc28j60_send(uint8_t *data, uint16_t datalen)
   /* Write the transmission control register as the first byte of the
      output packet. We write 0x00 to indicate that the default
      configuration (the values in MACON3) will be used.  */
-  writedatabyte(0x00);
-
-  writedata(data, datalen);
+#define WITH_MANUAL_PADDING 1
+#if WITH_MANUAL_PADDING
+#define PADDING_MIN_SIZE 60
+  writedatabyte(0x0B); /* POVERRIDE, PCRCEN, PHUGEEN. Not PPADEN */
+  if(datalen < PADDING_MIN_SIZE) {
+    padding = PADDING_MIN_SIZE - datalen;
+  } else {
+    padding = 0;
+  }
+#else /* WITH_MANUAL_PADDING */
+  writedatabyte(0x00); /* MACON3 */
+  padding = 0;
+#endif /* WITH_MANUAL_PADDING */
 
   /* Write a pointer to the last data byte. */
-  writereg(ETXNDL, (TX_BUF_START + datalen) & 0xff);
-  writereg(ETXNDH, (TX_BUF_START + datalen) >> 8);
+  writereg(ETXNDL, (TX_BUF_START + datalen + 0 + padding) & 0xff);
+  writereg(ETXNDH, (TX_BUF_START + datalen + 0 + padding) >> 8);
+
+  writedata(data, datalen);
+  if(padding > 0) {
+    uint8_t padding_buf[60];
+    memset(padding_buf, 0, padding);
+    writedata(padding_buf, padding);
+  }
 
   /* Clear EIR.TXIF */
   writereg(EIR, readreg(EIR) & (~EIR_TXIF));
@@ -465,17 +520,32 @@ enc28j60_send(uint8_t *data, uint16_t datalen)
 
   /* Send the packet */
   writereg(ECON1, readreg(ECON1) | ECON1_TXRTS);
+  while((readreg(ECON1) & ECON1_TXRTS) > 0);
+
+  if((readreg(ESTAT) & ESTAT_TXABRT) != 0) {
+    PRINTF("enc28j60: tx err: %d: %02x:%02x:%02x:%02x:%02x:%02x\n", datalen,
+           0xff&data[0], 0xff&data[1], 0xff&data[2],
+           0xff&data[3], 0xff&data[4], 0xff&data[5]);
+  } else {
+    PRINTF("enc28j60: tx: %d: %02x:%02x:%02x:%02x:%02x:%02x\n", datalen,
+           0xff&data[0], 0xff&data[1], 0xff&data[2],
+           0xff&data[3], 0xff&data[4], 0xff&data[5]);
+  }
+  sent_packets++;
+  PRINTF("enc28j60: sent_packets %d\n", sent_packets);
+  return datalen;
 }
 /*---------------------------------------------------------------------------*/
 int
 enc28j60_read(uint8_t *buffer, uint16_t bufsize)
 {
-  int i;
-  int n, len, next;
+  int n, len, next, err;
 
   uint8_t nxtpkt[2];
   uint8_t status[2];
   uint8_t length[2];
+
+  err = 0;
 
   setregbank(EPKTCNT_BANK);
   n = readreg(EPKTCNT);
@@ -484,37 +554,46 @@ enc28j60_read(uint8_t *buffer, uint16_t bufsize)
     return 0;
   }
 
-  /*  printf("EPKTCNT 0x%02x\n", n);*/
+  PRINTF("enc28j60: EPKTCNT 0x%02x\n", n);
 
   setregbank(ERXTX_BANK);
   /* Read the next packet pointer */
   nxtpkt[0] = readdatabyte();
   nxtpkt[1] = readdatabyte();
 
-  /*  printf("nxtpkt 0x%02x%02x\n", nxtpkt[1], nxtpkt[0]);*/
+  PRINTF("enc28j60: nxtpkt 0x%02x%02x\n", nxtpkt[1], nxtpkt[0]);
 
 
   length[0] = readdatabyte();
   length[1] = readdatabyte();
 
-  /*  printf("length 0x%02x%02x\n", length[1], length[0]);*/
+  PRINTF("enc28j60: length 0x%02x%02x\n", length[1], length[0]);
 
   status[0] = readdatabyte();
   status[1] = readdatabyte();
 
-  /*  printf("status 0x%02x%02x\n", status[1], status[0]);*/
-
+  /* This statement is just to avoid a compiler warning: */
+  status[0] = status[0];
+  PRINTF("enc28j60: status 0x%02x%02x\n", status[1], status[0]);
 
   len = (length[1] << 8) + length[0];
-  i = 0;
   if(bufsize >= len) {
     readdata(buffer, len);
-    i = len;
+  } else {
+    uint16_t i;
+
+    err = 1;
+
+    /* flush rx fifo */
+    for(i = 0; i < len; i++) {
+      readdatabyte();
+    }
   }
-  /* Write next packet pointer to ERDPT and acknowledge that we have
-     read out the packet */
-  writereg(ERDPTL, nxtpkt[0]);
-  writereg(ERDPTH, nxtpkt[1]);
+
+  /* Read an additional byte at odd lengths, to avoid FIFO corruption */
+  if((len % 2) != 0) {
+    readdatabyte();
+  }
 
   /* Errata #14 */
   next = (nxtpkt[1] << 8) + nxtpkt[0];
@@ -527,7 +606,40 @@ enc28j60_read(uint8_t *buffer, uint16_t bufsize)
   writereg(ERXRDPTH, next >> 8);
 
   writereg(ECON2, readreg(ECON2) | ECON2_PKTDEC);
-  /*  printf("%d/%d\n", i, len);*/
-  return i;
+
+  if(err) {
+    PRINTF("enc28j60: rx err: flushed %d\n", len);
+    return 0;
+  }
+  PRINTF("enc28j60: rx: %d: %02x:%02x:%02x:%02x:%02x:%02x\n", len,
+         0xff&buffer[0], 0xff&buffer[1], 0xff&buffer[2],
+         0xff&buffer[3], 0xff&buffer[4], 0xff&buffer[5]);
+
+  received_packets++;
+  PRINTF("enc28j60: received_packets %d\n", received_packets);
+  return len;
+}
+/*---------------------------------------------------------------------------*/
+PROCESS_THREAD(enc_watchdog_process, ev, data)
+{
+  static struct etimer et;
+
+  PROCESS_BEGIN();
+
+  while(1) {
+#define RESET_PERIOD (30*CLOCK_SECOND)
+    etimer_set(&et, RESET_PERIOD);
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+
+    PRINTF("enc28j60: test received_packet %d > sent_packets %d\n", received_packets, sent_packets);
+    if(received_packets <= sent_packets) {
+      PRINTF("enc28j60: resetting chip\n");
+      reset();
+    }
+    received_packets = 0;
+    sent_packets = 0;
+  }
+
+  PROCESS_END();
 }
 /*---------------------------------------------------------------------------*/

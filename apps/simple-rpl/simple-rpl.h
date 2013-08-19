@@ -37,10 +37,16 @@ void simple_rpl_init(void);
 
 void simple_rpl_init_dag(void);
 
-void simple_rpl_init_dag_immediately(void);
+int simple_rpl_init_dag_immediately(void);
 
 void simple_rpl_global_repair(void);
 
 void simple_rpl_local_repair(void);
+
+const uip_ipaddr_t *simple_rpl_parent(void);
+
+const uip_ipaddr_t *simple_rpl_root(void);
+
+const uip_ipaddr_t *simple_rpl_global_address(void);
 
 #endif /* SIMPLE_RPL_H */

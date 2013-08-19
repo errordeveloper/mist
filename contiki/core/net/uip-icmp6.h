@@ -113,6 +113,15 @@ typedef struct uip_icmp6_error{
 void
 uip_icmp6_echo_request_input(void);
 
+/** \
+ * brief Process an echo reply
+ *
+ * Perform a few checks, then call applications to inform that an echo
+ * reply has been received.
+  */
+void
+uip_icmp6_echo_reply_input(void);
+
 /**
  * \brief Send an icmpv6 error message
  * \param type type of the error message
@@ -131,6 +140,26 @@ uip_icmp6_error_output(uint8_t type, uint8_t code, uint32_t param);
  */
 void
 uip_icmp6_send(uip_ipaddr_t *dest, int type, int code, int payload_len);
+
+
+
+typedef void (* uip_icmp6_echo_reply_callback_t)(uip_ipaddr_t *source,
+                                                 uint8_t ttl,
+                                                 uint8_t *data,
+                                                 uint16_t datalen);
+struct uip_icmp6_echo_reply_notification {
+  struct uip_icmp6_echo_reply_notification *next;
+  uip_icmp6_echo_reply_callback_t callback;
+};
+
+void
+uip_icmp6_echo_reply_callback_add(struct uip_icmp6_echo_reply_notification *n,
+                                  uip_icmp6_echo_reply_callback_t c);
+
+void
+uip_icmp6_echo_reply_callback_rm(struct uip_icmp6_echo_reply_notification *n);
+
+
 
 
 /** @} */

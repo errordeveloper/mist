@@ -1,105 +1,61 @@
-<!DOCTYPE html><html lang="en"><head>
+<!DOCTYPE html>
+<html lang="en"><head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>The Router</title>
-<link href="http://dunkels.com/adam/u.css" rel="stylesheet">
-</head><body>
-<div class="gap"><h1>The Router</h1></div>
-<div class="c"><div class="r"><div class="s6 o1"><div class="w" id="rpl-spin">
-<h1>RPL Routes</h1><div id="routes"></div>
-<a href="#" id="rpl-reset" class="b">Reset network</a>
-<a href="#" id="rpl-load" class="b b-p">Refresh</a>
-<a href="#" id="rpl-ping" class="b b-p">Ping</a>
-</div></div><div class="s4"><div class="w">
-<h1>IPv6 Neighbors</h1><div id="nbrs"></div>
-<a href="#" id="nbrs-load" class="b b-p">Refresh</a>
-<a href="#" id="nbrs-ping" class="b b-p">Ping</a>
-</div></div></div><div class="r"><div class="s8 o2"><div class="w">
-<h1>IP Address Mapping Table</h1>
-<div id="nat"></div><a href="#" id="nat-load" class="b b-p">Refresh</a>
-</div></div></div>
-<div class="r"><div class="s4 o4"><a href="#" id="net-reboot" class="b">Reboot entire network</a><div id="reboot"></div></div></div>
-</div><footer><div class="c"><p class="text-center">
-The footer</p></div></footer>
-<script src="http://dunkels.com/adam/u.js"></script>
+<title>Thingsquare Router</title>
+<link href="http://thingsquare.com/dcdn/1.1/bs.css" rel="stylesheet">
+<style>
+.navbar-inner{background-image:none;background-color:rgba(242,242,242,0.9);
+border-bottom:1px solid #0f0f0f;-webkit-box-shadow:0;-moz-box-shadow:0;box-shadow:0;}
+.navbar .brand{margin-top:6px;}
+body{text-align:center;}
+.b{padding-top:70px;}
+</style>
+</head>
+<body>
+<div class="navbar navbar-fixed-top">
+<div class="navbar-inner">
+<div class="container-fluid">
+<a class="brand"
+href="http://thingsquare.com/" target="_blank"><img src="http://thingsquare.com/dcdn/1.1/logo.png"></a>
+</div>
+</div>
+</div>
+<div class="container-fluid">
+<div class="row-fluid b">
+<div class="span6">
+<h1>RPL Routes</h1><div id="routes"><br></div>
+<a href="#" id="rpl-load" class="btn btn-primary">Refresh</a>
+<a href="rplreset.shtml" id="rpl-reset" class="btn">Repair network</a>
+<a href="rplroot.shtml" id="rpl-root" class="btn">Become root</a>
+<a href="routesping.shtml" id="rpl-ping" class="btn">Ping network</a>
+</div>
+<div class="span6">
+<h1>IPv6 Neighbors</h1><div id="nbrs"><br></div>
+<a href="#" id="nbrs-load" class="btn btn-primary">Refresh</a>
+<a href="nbrsping.shtml" id="nbrs-ping" class="btn">Ping neighbors</a>
+</div>
+</div>
+<hr>
+<div class="row-fluid">
+<h1>IPv6 to IPv4 Mapping Table</h1>
+<div id="nat"><br></div><a href="#" id="nat-load" class="btn btn-primary">Refresh</a>
+</div>
+<hr>
+<script src="http://thingsquare.com/dcdn/1.1/u.js"></script>
 <script>
-var opts = {
-lines: 12,
-length: 4,
-width: 2,
-radius: 4,
-rotate: 12,
-color: '#000',
-speed: 1.8,
-trail: 56,
-shadow: false,
-hwaccel: false,
-className: 'spinner',
-zIndex: 2e9,
-top: 'auto',
-left: 'auto'
-};
-
-$('#rpl-load').click(function() {
-var target = document.getElementById('rpl-spin');
-var spinner = new Spinner(opts).spin(target);
-$.get('routes.shtml', function(data) {
-$('#routes').html(data);
-spinner.stop();
-});
-return false;
-});
-$('#rpl-reset').click(function() {
-var target = document.getElementById('routes');
-var spinner = new Spinner(opts).spin(target);
-$.get('rplreset.shtml', function(data) {
-$('#routes').html(data);
-});
-return false;
-});
-$('#nbrs-load').click(function() {
-var target = document.getElementById('nbrs');
-var spinner = new Spinner(opts).spin(target);
-$.get('nbrs.shtml', function(data) {
-$('#nbrs').html(data);
-});
-return false;
-});
-
-$('#nbrs-ping').click(function() {
-var target = document.getElementById('nbrs');
-var spinner = new Spinner(opts).spin(target);
-$.get('nbrsping.shtml', function(data) {
-$('#nbrs').html(data);
-});
-return false;
-});
-
-$('#rpl-ping').click(function() {
-var target = document.getElementById('routes');
-var spinner = new Spinner(opts).spin(target);
-$.get('routesping.shtml', function(data) {
-$('#routes').html(data);
-});
-return false;
-});
-
-$('#nat-load').click(function() {
-var target = document.getElementById('nat');
-var spinner = new Spinner(opts).spin(target);
-$.get('nat.shtml', function(data) {
-$('#nat').html(data);
-});
-return false;
-});
-
-$('#net-reboot').click(function() {
-var target = document.getElementById('reboot');
-var spinner = new Spinner(opts).spin(target);
-$.get('reboot.shtml', function(data) {
-$('#reboot').html(data);
-});
-return false;
-});
-</script>
+var opts = {lines: 12,length: 4,width: 2,radius: 4, rotate: 12,color: '#000',speed: 1.8,trail: 56,
+shadow: false,hwaccel: false,className: 'spinner', zIndex: 2e9,top: 'auto',left: 'auto'};
+function spinload(spinid,url,id){ var t = document.getElementById(spinid);
+var s = new Spinner(opts).spin(t);$.get(url,function(data){$(id).html(data);}).always(function(){s.stop();})}
+$('#rpl-load').click(function(){spinload('routes','routes.shtml','#routes'); return false;});
+$('#rpl-reset').click(function(){spinload('routes','rplreset.shtml','#routes');return false;});
+$('#rpl-root').click(function(){spinload('routes','rplroot.shtml','#routes');return false;});
+$('#nbrs-load').click(function(){spinload('nbrs','nbrs.shtml','#nbrs');return false;});
+$('#nbrs-ping').click(function(){spinload('nbrs','nbrsping.shtml','#nbrs');return false;});
+$('#rpl-ping').click(function(){spinload('routes','routesping.shtml','#routes');return false;});
+$('#nat-load').click(function(){spinload('nat','nat.shtml','#nat');return false;});
+$(document).ready(function() {
+$('#rpl-load').click(); $('#nbrs-load').click(); $('#nat-load').click();
+});</script>
 </body>
 </html>

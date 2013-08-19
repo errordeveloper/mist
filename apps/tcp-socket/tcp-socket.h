@@ -39,7 +39,8 @@ typedef enum {
   TCP_SOCKET_CONNECTED,
   TCP_SOCKET_CLOSED,
   TCP_SOCKET_TIMEDOUT,
-  TCP_SOCKET_ABORTED
+  TCP_SOCKET_ABORTED,
+  TCP_SOCKET_DATA_SENT
 } tcp_socket_event_t;
 
 /**
@@ -76,8 +77,8 @@ typedef int (* tcp_socket_input_callback_t)(struct tcp_socket *s,
  *             the socket getting connected or closed.
  */
 typedef void (* tcp_socket_event_callback_t)(struct tcp_socket *s,
-					    void *ptr,
-					    tcp_socket_event_t event);
+                                             void *ptr,
+                                             tcp_socket_event_t event);
 
 struct tcp_socket {
   struct tcp_socket *next;
@@ -97,30 +98,37 @@ struct tcp_socket {
   uint16_t output_data_len;
   uint16_t output_data_send_nxt;
 
-  uint8_t is_listening;
+  uint8_t flags;
   uint16_t listen_port;
 };
 
+enum {
+  TCP_SOCKET_FLAGS_NONE      = 0x00,
+  TCP_SOCKET_FLAGS_LISTENING = 0x01,
+  TCP_SOCKET_FLAGS_CLOSING   = 0x02,
+};
 
 void tcp_socket_register(struct tcp_socket *s, void *ptr,
-                  uint8_t *input_databuf, int input_databuf_len,
-                  uint8_t *output_databuf, int output_databuf_len,
-                  tcp_socket_input_callback_t input_callback,
-                  tcp_socket_event_callback_t event_callback);
+                         uint8_t *input_databuf, int input_databuf_len,
+                         uint8_t *output_databuf, int output_databuf_len,
+                         tcp_socket_input_callback_t input_callback,
+                         tcp_socket_event_callback_t event_callback);
 
 int tcp_socket_connect(struct tcp_socket *s,
-                uip_ipaddr_t *ipaddr,
-                uint16_t port);
+                       uip_ipaddr_t *ipaddr,
+                       uint16_t port);
 
 int tcp_socket_listen(struct tcp_socket *s,
-               uint16_t port);
+                      uint16_t port);
+
+int tcp_socket_unlisten(struct tcp_socket *s);
 
 int tcp_socket_send(struct tcp_socket *s,
-             const uint8_t *dataptr,
-             int datalen);
+                    const uint8_t *dataptr,
+                    int datalen);
 
 int tcp_socket_send_str(struct tcp_socket *s,
-                 const char *strptr);
+                        const char *strptr);
 
 int tcp_socket_close(struct tcp_socket *s);
 

@@ -68,16 +68,16 @@ leds_arch_get(void)
 {
   unsigned char ret = 0xff;
 
-  if(SdkEvalLedGetState(LED1)) {
-    ret |= LEDS_CONF_RED;
-  }
-  
-  if(SdkEvalLedGetState(LED2)) {
-    ret |= LEDS_CONF_GREEN;
-  }
-  
   if(SdkEvalLedGetState(LED3)) {
-    ret |= LEDS_CONF_BLUE;
+    ret |= LEDS_RED;
+  }
+  
+  if(SdkEvalLedGetState(LED1)) {
+    ret |= LEDS_GREEN;
+  }
+  
+  if(SdkEvalLedGetState(LED4)) {
+    ret |= LEDS_BLUE;
   }
 
   return ret;
@@ -87,22 +87,23 @@ void
 leds_arch_set(unsigned char leds)
 {
   /* the LEDs API uses active low, hence if bit is set, it should be off. */
-  if(leds & LEDS_CONF_RED) {
+
+  if(leds & LEDS_GREEN) {
     SdkEvalLedOn(LED1);
   } else {
     SdkEvalLedOff(LED1);
   }
 
-  if(leds & LEDS_CONF_GREEN) {
-    SdkEvalLedOn(LED2);
-  } else {
-    SdkEvalLedOff(LED2);
-  }
-
-  if(leds & LEDS_CONF_BLUE) {
+  if(leds & LEDS_RED) {
     SdkEvalLedOn(LED3);
   } else {
     SdkEvalLedOff(LED3);
+  }
+
+  if(leds & LEDS_BLUE) {
+    SdkEvalLedOn(LED4);
+  } else {
+    SdkEvalLedOff(LED4);
   }
 }
 /*---------------------------------------------------------------------------*/

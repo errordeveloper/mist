@@ -39,7 +39,6 @@ import se.sics.cooja.MoteInterface;
 import se.sics.cooja.MoteType;
 import se.sics.cooja.Simulation;
 import se.sics.cooja.dialogs.AbstractCompileDialog;
-import se.sics.cooja.mspmote.MspMoteType;
 
 public class MicaZCompileDialog extends AbstractCompileDialog {
   private static Logger logger = Logger.getLogger(MicaZCompileDialog.class);

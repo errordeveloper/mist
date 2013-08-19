@@ -46,6 +46,8 @@ int netstack_aes_verify(void);
 #define NETSTACK_DECRYPT         netstack_aes_decrypt
 #define NETSTACK_VERIFY          netstack_aes_verify
 
+#ifndef NETSTACK_AES_MICLEN
 #define NETSTACK_AES_MICLEN 4
+#endif /* NETSTACK_AES_MICLEN */
 
 #endif /* NETSTACK_AES_H */

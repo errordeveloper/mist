@@ -2,7 +2,9 @@
 #ifndef __PLATFORM_CONF_H__
 #define __PLATFORM_CONF_H__
 
-#define MIST_CONF_NETSTACK (MIST_CONF_AES | MIST_CONF_CONTIKIMAC)
+#ifndef MIST_CONF_NETSTACK
+#define MIST_CONF_NETSTACK (MIST_CONF_AES | MIST_CONF_DROWSIE)
+#endif /* MIST_CONF_NETSTACK */
 
 /* CPU target speed in Hz; works fine at 8, 16, 18 MHz but not higher. */
 #define F_CPU 16000000uL
@@ -26,6 +28,7 @@
 /* Types for clocks and uip_stats */
 typedef unsigned short uip_stats_t;
 typedef unsigned long clock_time_t;
+#define CLOCK_LT(a,b)  ((signed long)((a)-(b)) < 0)
 typedef unsigned long off_t;
 
 /* DCO speed resynchronization for more robust UART, etc. */
@@ -71,7 +74,7 @@ typedef unsigned long off_t;
 /*
  * SPI bus - M25P80 external flash configuration.
  */
-//#define FLASH_PWR     3       /* P4.3 Output */ ALWAYS POWERED ON Z1
+//#define FLASH_PWR     3       /* P4.3 Output */
 #define FLASH_CS        4       /* P4.4 Output */
 #define FLASH_HOLD      7       /* P5.7 Output */
 
@@ -162,5 +165,14 @@ typedef unsigned long off_t;
 #define CC2420_SPI_DISABLE()    (CC2420_CSN_PORT(OUT) |=  BV(CC2420_CSN_PIN))
 #define CC2420_SPI_IS_ENABLED() ((CC2420_CSN_PORT(OUT) & BV(CC2420_CSN_PIN)) != BV(CC2420_CSN_PIN))
 
+#define MULTICHAN_CONF_SET_CHANNEL(x) cc2420_set_channel(x)
+#define MULTICHAN_CONF_READ_RSSI(x)  0 /* not implemented */
+
+#undef QUEUEBUF_CONF_NUM
+#define QUEUEBUF_CONF_NUM                4
+#undef NBR_TABLE_CONF_MAX_NEIGHBORS
+#define NBR_TABLE_CONF_MAX_NEIGHBORS     4
+#undef UIP_CONF_DS6_ROUTE_NBU
+#define UIP_CONF_DS6_ROUTE_NBU   4
 
 #endif /* __PLATFORM_CONF_H__ */

@@ -173,7 +173,7 @@
 /** @} */
 /*---------------------------------------------------------------------------*/
 /** \brief Initialises the NVIC driver */
-void nvic_init();
+void nvic_init(void);
 
 /**
  * \brief Enables interrupt intr

@@ -106,10 +106,6 @@
 #define PLATFORM_HAS_LEDS 1
 #define PLATFORM_HAS_BUTTON 1
 
-/* Core rtimer.h defaults to 16 bit timer unless RTIMER_CLOCK_LT is defined */
-typedef unsigned long rtimer_clock_t;
-#define RTIMER_CLOCK_LT(a,b)     ((signed long)((a)-(b)) < 0)
-
 #define RIMEADDR_CONF_SIZE              8
 
 #if WITH_UIP6
@@ -146,7 +142,7 @@ typedef unsigned long rtimer_clock_t;
 #define XMAC_CONF_COMPOWER               0
 #define CXMAC_CONF_COMPOWER              0
 
-#define COLLECT_NEIGHBOR_CONF_MAX_NEIGHBORS      32
+#define COLLECT_NBR_TABLE_CONF_MAX_NEIGHBORS      32
 
 #endif /* WITH_UIP6 */
 
@@ -180,10 +176,15 @@ typedef unsigned long rtimer_clock_t;
 #define UIP_CONF_LL_802154              1
 #define UIP_CONF_LLH_LEN                0
 
+#ifndef UIP_CONF_ROUTER
 #define UIP_CONF_ROUTER                 1  
-#define UIP_CONF_IPV6_RPL               1
+#endif
 
-#define UIP_CONF_DS6_NBR_NBU     30
+#ifndef UIP_CONF_IPV6_RPL
+#define UIP_CONF_IPV6_RPL               1
+#endif
+
+#define NBR_TABLE_CONF_MAX_NEIGHBORS     30
 #define UIP_CONF_MAX_ROUTES   30
 
 #define UIP_CONF_ND6_SEND_RA		0
@@ -196,7 +197,6 @@ typedef unsigned long rtimer_clock_t;
 #define UIP_CONF_IPV6_REASSEMBLY        0
 #define UIP_CONF_NETIF_MAX_ADDRESSES    3
 #define UIP_CONF_ND6_MAX_PREFIXES       3
-#define UIP_CONF_ND6_MAX_NEIGHBORS      4
 #define UIP_CONF_ND6_MAX_DEFROUTERS     2
 #define UIP_CONF_IP_FORWARD             0
 #define UIP_CONF_BUFFER_SIZE		1300
@@ -236,6 +236,10 @@ typedef unsigned long rtimer_clock_t;
 #define UIP_CONF_LOGGING         0
 
 #define UIP_CONF_TCP_SPLIT       0
+
+#ifdef PLATFORM_CONF
+#include PLATFORM_CONF
+#endif /* PLATFORM_CONF */
 
 /* include the project config */
 /* PROJECT_CONF_H might be defined in the project Makefile */

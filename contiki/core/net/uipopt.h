@@ -144,7 +144,11 @@
  *
  * This should normally not be changed.
  */
+#ifdef UIP_CONF_TTL
+#define UIP_TTL         UIP_CONF_TTL
+#else /* UIP_CONF_TTL */
 #define UIP_TTL         64
+#endif /* UIP_CONF_TTL */
 
 /**
  * The maximum time an IP fragment should wait in the reassembly
@@ -211,11 +215,6 @@
 #ifndef UIP_CONF_DS6_PREFIX_NBU
 /** Default number of IPv6 prefixes associated to the node's interface */
 #define UIP_CONF_DS6_PREFIX_NBU     2
-#endif
-
-#ifndef UIP_CONF_DS6_NBR_NBU
-/** Default number of neighbors that can be stored in the %neighbor cache */
-#define UIP_CONF_DS6_NBR_NBU    4
 #endif
 
 #ifndef UIP_CONF_DS6_DEFRT_NBU
@@ -517,6 +516,10 @@
 #else /* UIP_CONF_BUFFER_SIZE */
 #define UIP_BUFSIZE (UIP_CONF_BUFFER_SIZE)
 #endif /* UIP_CONF_BUFFER_SIZE */
+
+#if UIP_BUFSIZE < (UIP_TCP_MSS + UIP_LLH_LEN + UIP_TCPIP_HLEN)
+#error "UIP_BUFSIZE too small for UIP_TCP_MSS, must be at least 70 bytes bigger"
+#endif
 
 
 /**

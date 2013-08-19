@@ -72,6 +72,7 @@
 #define DEBUG 0
 
 #if DEBUG
+#undef PRINTF
 #define PRINTF(...) printf(__VA_ARGS__)
 #else /* DEBUG */
 #define PRINTF(...)
@@ -163,6 +164,16 @@ static uint8_t ipv6_local_address_configured = 0;
 
 static uip_ip4addr_t ipv4_broadcast_addr;
 
+/* Lifetimes for address mappings. */
+#define SYN_LIFETIME     (CLOCK_SECOND * 20)
+#define RST_LIFETIME     (CLOCK_SECOND * 30)
+#define DEFAULT_LIFETIME (CLOCK_SECOND * 60 * 5)
+
+/* TCP flag defines */
+#define TCP_FIN 0x01
+#define TCP_SYN 0x02
+#define TCP_RST 0x04
+
 /*---------------------------------------------------------------------------*/
 void
 ip64_init(void)
@@ -248,10 +259,11 @@ ip64_set_ipv6_address(const uip_ip6addr_t *addr)
 {
   ip64_addr_copy6(&ipv6_local_address, (const uip_ip6addr_t *)addr);
   ipv6_local_address_configured = 1;
-
+#if DEBUG
   PRINTF("ip64_set_ipv6_address: configuring address ");
   uip_debug_ipaddr_print(addr);
   PRINTF("\n");
+#endif /* DEBUG */
 }
 /*---------------------------------------------------------------------------*/
 static uint16_t
@@ -295,7 +307,7 @@ ipv4_checksum(struct ipv4_hdr *hdr)
 }
 /*---------------------------------------------------------------------------*/
 static uint16_t
-ipv4_transport_checksum(uint8_t *packet, uint16_t len, uint8_t proto)
+ipv4_transport_checksum(const uint8_t *packet, uint16_t len, uint8_t proto)
 {
   uint16_t transport_layer_len;
   uint16_t sum;
@@ -322,7 +334,7 @@ ipv4_transport_checksum(uint8_t *packet, uint16_t len, uint8_t proto)
 }
 /*---------------------------------------------------------------------------*/
 static uint16_t
-ipv6_transport_checksum(uint8_t *packet, uint16_t len, uint8_t proto)
+ipv6_transport_checksum(const uint8_t *packet, uint16_t len, uint8_t proto)
 {
   uint16_t transport_layer_len;
   uint16_t sum;
@@ -410,11 +422,27 @@ ip64_6to4(const uint8_t *ipv6packet, const uint16_t ipv6packet_len,
   case IP_PROTO_TCP:
     PRINTF("ip64_6to4: TCP header\n");
     v4hdr->proto = IP_PROTO_TCP;
+
+    /* Compute and check the TCP checksum - since we're going to
+       recompute it ourselves, we must ensure that it was correct in
+       the first place. */
+    if(ipv6_transport_checksum(ipv6packet, ipv6len,
+                               IP_PROTO_TCP) != 0xffff) {
+      PRINTF("Bad TCP checksum, dropping packet\n");
+    }
+
     break;
 
   case IP_PROTO_UDP:
     PRINTF("ip64_6to4: UDP header\n");
     v4hdr->proto = IP_PROTO_UDP;
+    /* Compute and check the UDP checksum - since we're going to
+       recompute it ourselves, we must ensure that it was correct in
+       the first place. */
+    if(ipv6_transport_checksum(ipv6packet, ipv6len,
+                               IP_PROTO_UDP) != 0xffff) {
+      PRINTF("Bad UDP checksum, dropping packet\n");
+    }
     break;
 
   case IP_PROTO_ICMPV6:
@@ -450,9 +478,11 @@ ip64_6to4(const uint8_t *ipv6packet, const uint16_t ipv6packet_len,
      indicate failure. */
   if(ip64_addr_6to4(&v6hdr->destipaddr,
 		    &v4hdr->destipaddr) == 0) {
+#if DEBUG
     PRINTF("ip64_6to4: Could not convert IPv6 destination address.\n");
     uip_debug_ipaddr_print(&v6hdr->destipaddr);
     PRINTF("\n");
+#endif /* DEBUG */
     return 0;
   }
 
@@ -512,6 +542,47 @@ ip64_6to4(const uint8_t *ipv6packet, const uint16_t ipv6packet_len,
 	PRINTF("Lookup: found local port %d (%d)\n", m->mapped_port,
 	       uip_htons(m->mapped_port));
       }
+
+      /* Update the lifetime of the address mapping. We need to be
+         frugal with address mapping table entries, so we assign
+         different lifetimes depending on the type of packet we see.
+
+         For TCP connections, we don't want to have a lot of failed
+         connection attmpts lingering around, so we assign mappings
+         with TCP SYN segments a short lifetime. If we see a RST
+         segment, this indicates that the connection might be dead,
+         and we'll assign a shorter lifetime.
+
+         For UDP packets and for non-SYN/non-RST segments, we assign
+         the default lifetime. */
+      if(v4hdr->proto == IP_PROTO_TCP) {
+        if((tcphdr->flags & TCP_SYN)) {
+          ip64_addrmap_set_lifetime(m, SYN_LIFETIME);
+        } else if((tcphdr->flags & TCP_RST)) {
+          ip64_addrmap_set_lifetime(m, RST_LIFETIME);
+        } else {
+          ip64_addrmap_set_lifetime(m, DEFAULT_LIFETIME);
+        }
+
+        /* Also check if we see a FIN segment. If so, we'll mark the
+           address mapping as being candidate for recycling. Same for
+           RST segments. */
+        if((tcphdr->flags & TCP_FIN) ||
+           (tcphdr->flags & TCP_RST)) {
+          ip64_addrmap_set_recycleble(m);
+        }
+      } else {
+        ip64_addrmap_set_lifetime(m, DEFAULT_LIFETIME);
+
+        /* Treat DNS requests specially: since the are one-shot, we
+           mark them as recyclable. */
+        if(udphdr->destport == UIP_HTONS(53)) {
+          ip64_addrmap_set_recycleble(m);
+        }
+      }
+
+      /* Set the source port of the packet to be the mapped port
+         number. */
       udphdr->srcport = uip_htons(m->mapped_port);
     }
   }
@@ -777,6 +848,12 @@ ip64_4to6(const uint8_t *ipv4packet, const uint16_t ipv4packet_len,
   /* Finally, we return the length of the resulting IPv6 packet. */
   PRINTF("ip64_4to6: ipv6len %d\n", ipv6len);
   return ipv6len;
+}
+/*---------------------------------------------------------------------------*/
+int
+ip64_hostaddr_is_configured(void)
+{
+  return ip64_hostaddr_configured;
 }
 /*---------------------------------------------------------------------------*/
 static void

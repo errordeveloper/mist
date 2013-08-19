@@ -6,7 +6,7 @@ hello-world/avr-raven \
 hello-world/econotag \
 hello-world/esb \
 hello-world/exp5438 \
-hello-world/mb851 \
+hello-world/mbxxx \
 hello-world/micaz \
 hello-world/minimal-net \
 hello-world/native \
@@ -15,6 +15,7 @@ hello-world/wismote \
 hello-world/z1 \
 hello-world/sensinode \
 hello-world/cc2530dk \
+eeprom-test/native \
 ipv6/rpl-border-router/econotag \
 collect/sky \
 er-rest-example/sky \
@@ -24,6 +25,7 @@ netperf/sky \
 powertrace/sky \
 rime/sky \
 rime/z1 \
+ravenusbstick/avr-ravenusb \
 rest-example/sky \
 servreg-hack/sky \
 sky/sky \
@@ -37,6 +39,7 @@ webserver-ipv6/sky \
 webserver-ipv6/econotag \
 wget/minimal-net \
 z1/z1 \
+settings-example/avr-raven \
 sensinode/sensinode \
 sensinode/border-router/sensinode \
 sensinode/udp-ipv6/sensinode \

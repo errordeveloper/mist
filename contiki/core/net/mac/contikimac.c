@@ -58,6 +58,7 @@
 
 /* TX/RX cycles are synchronized with neighbor wake periods */
 #ifdef CONTIKIMAC_CONF_WITH_PHASE_OPTIMIZATION
+#undef WITH_PHASE_OPTIMIZATION
 #define WITH_PHASE_OPTIMIZATION      CONTIKIMAC_CONF_WITH_PHASE_OPTIMIZATION
 #else /* CONTIKIMAC_CONF_WITH_PHASE_OPTIMIZATION */
 #define WITH_PHASE_OPTIMIZATION      1
@@ -257,16 +258,6 @@ static struct compower_activity current_packet;
 
 #include "net/mac/phase.h"
 
-#ifdef CONTIKIMAC_CONF_MAX_PHASE_NEIGHBORS
-#define MAX_PHASE_NEIGHBORS CONTIKIMAC_CONF_MAX_PHASE_NEIGHBORS
-#endif
-
-#ifndef MAX_PHASE_NEIGHBORS
-#define MAX_PHASE_NEIGHBORS 30
-#endif
-
-PHASE_LIST(phase_list, MAX_PHASE_NEIGHBORS);
-
 #endif /* WITH_PHASE_OPTIMIZATION */
 
 #define DEFAULT_STREAM_TIME (4 * CYCLE_TIME)
@@ -328,7 +319,7 @@ schedule_powercycle(struct rtimer *t, rtimer_clock_t time)
     r = rtimer_set(t, RTIMER_TIME(t) + time, 1,
                    (void (*)(struct rtimer *, void *))powercycle, NULL);
     if(r != RTIMER_OK) {
-      printf("schedule_powercycle: could not set rtimer\n");
+      PRINTF("schedule_powercycle: could not set rtimer\n");
     }
   }
 }
@@ -347,7 +338,7 @@ schedule_powercycle_fixed(struct rtimer *t, rtimer_clock_t fixed_time)
     r = rtimer_set(t, fixed_time, 1,
                    (void (*)(struct rtimer *, void *))powercycle, NULL);
     if(r != RTIMER_OK) {
-      printf("schedule_powercycle: could not set rtimer\n");
+      PRINTF("schedule_powercycle: could not set rtimer\n");
     }
   }
 }
@@ -579,7 +570,10 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
     return MAC_TX_ERR_FATAL;
   }
 
+#if !NETSTACK_CONF_BRIDGE_MODE
+  /* If NETSTACK_CONF_BRIDGE_MODE is set, assume PACKETBUF_ADDR_SENDER is already set. */
   packetbuf_set_addr(PACKETBUF_ADDR_SENDER, &rimeaddr_node_addr);
+#endif
   if(rimeaddr_cmp(packetbuf_addr(PACKETBUF_ADDR_RECEIVER), &rimeaddr_null)) {
     is_broadcast = 1;
     PRINTDEBUG("contikimac: send broadcast\n");
@@ -668,7 +662,7 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
 
   if(!is_broadcast && !is_receiver_awake) {
 #if WITH_PHASE_OPTIMIZATION
-    ret = phase_wait(&phase_list, packetbuf_addr(PACKETBUF_ADDR_RECEIVER),
+    ret = phase_wait(packetbuf_addr(PACKETBUF_ADDR_RECEIVER),
                      CYCLE_TIME, GUARD_TIME,
                      mac_callback, mac_callback_ptr, buf_list);
     if(ret == PHASE_DEFERRED) {
@@ -871,7 +865,7 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
 
   if(!is_broadcast) {
     if(collisions == 0 && is_receiver_awake == 0) {
-      phase_update(&phase_list, packetbuf_addr(PACKETBUF_ADDR_RECEIVER),
+      phase_update(packetbuf_addr(PACKETBUF_ADDR_RECEIVER),
 		   encounter_time, ret);
     }
   }
@@ -1055,7 +1049,7 @@ init(void)
   contikimac_is_on = 1;
 
 #if WITH_PHASE_OPTIMIZATION
-  phase_init(&phase_list);
+  phase_init();
 #endif /* WITH_PHASE_OPTIMIZATION */
 
 }

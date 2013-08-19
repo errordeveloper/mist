@@ -100,4 +100,9 @@ typedef unsigned long off_t;
 #define NETSTACK_CONF_RADIO   cc11xx_driver
 #define NETSTACK_RADIO_MAX_PAYLOAD_LEN 125
 
+signed char cc11xx_read_rssi(void);
+void cc11xx_channel_set(uint8_t c);
+#define MULTICHAN_CONF_SET_CHANNEL(x) cc11xx_channel_set(x)
+#define MULTICHAN_CONF_READ_RSSI(x) cc11xx_read_rssi()
+
 #endif /* __PLATFORM_CONF_H__ */

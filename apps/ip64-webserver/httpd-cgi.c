@@ -49,8 +49,8 @@
 #include "httpd.h"
 #include "httpd-cgi.h"
 #include "httpd-fs.h"
+#include "simple-rpl.h"
 
-#include "net/neighbor-info.h"
 #include "net/rpl/rpl.h"
 
 #include "lib/petsciiconv.h"
@@ -332,14 +332,15 @@ PT_THREAD(addresses(struct httpd_state *s, char *ptr))
 static unsigned short
 make_neighbor(void *p)
 {
-  int i, j = 0;
   uint16_t numprinted = 0;
-
+  uip_ds6_nbr_t *nbr;
+  
   struct httpd_state *s = (struct httpd_state *)p;
-  i = s->u.count;
+
+  nbr = s->u.ptr;
   /*  for(i = 0; i < UIP_DS6_NBR_NB; i++)*/ {
-    if(uip_ds6_nbr_cache[i].isused) {
-      j++;
+    /*    if(uip_ds6_nbr_cache[i].isused)*/ {
+    
       numprinted +=
           httpd_snprintf((char *)uip_appdata, uip_mss(), httpd_cgi_addrh);
       if(numprinted >= uip_mss()) {
@@ -347,24 +348,24 @@ make_neighbor(void *p)
       }
 
       numprinted +=
-          httpd_cgi_sprint_ip6(&uip_ds6_nbr_cache[i].ipaddr,
+          httpd_cgi_sprint_ip6(&nbr->ipaddr,
                                (char *)uip_appdata + numprinted);
       if(numprinted >= uip_mss()) {
         return write_mss_error(5);
       }
 
-      if(simple_udp_ping_has_reply(&uip_ds6_nbr_cache[i].ipaddr)) {
-        int delay = simple_udp_ping_get_delay(&uip_ds6_nbr_cache[i].ipaddr);
+      if(simple_udp_ping_has_reply(&nbr->ipaddr)) {
+        int delay = simple_udp_ping_get_delay(&nbr->ipaddr);
         numprinted +=
             httpd_snprintf((char *)uip_appdata + numprinted,
                            uip_mss() - numprinted, "</td><td>%u ms", delay);
         if(numprinted >= uip_mss()) {
           return write_mss_error(6);
         }
-      } else if(simple_udp_ping_has_sent(&uip_ds6_nbr_cache[i].ipaddr)) {
+      } else if(simple_udp_ping_has_sent(&nbr->ipaddr)) {
         numprinted +=
             httpd_snprintf((char *)uip_appdata + numprinted,
-                           uip_mss() - numprinted, "</td><td>sent ping");
+                           uip_mss() - numprinted, "</td><td>Ping scheduled...");
         if(numprinted >= uip_mss()) {
           return write_mss_error(7);
         }
@@ -394,19 +395,24 @@ make_neighbor_roomfor(void *p)
 {
   static const char httpd_cgi_room2[] HTTPD_STRING_ATTR =
     "<tr><td colspan=2>(Room for %u more)</td></tr>";
-  int i;
   int j = 0;
   uint16_t numprinted = 0;
+  uip_ds6_nbr_t *nbr;
 
-  for(i = 0; i < UIP_DS6_NBR_NB; i++) {
+  for(j = 0,
+        nbr = nbr_table_head(ds6_neighbors);
+      nbr != NULL;
+      j++,
+        nbr = nbr_table_next(ds6_neighbors, nbr));
+  /*  for(i = 0; i < UIP_DS6_NBR_NB; i++) {
     if(uip_ds6_nbr_cache[i].isused) {
       j++;
     }
-  }
+    }*/
 
   numprinted += httpd_snprintf((char *)uip_appdata + numprinted,
        uip_mss() - numprinted,
-       httpd_cgi_room2, UIP_DS6_NBR_NB - j);
+       httpd_cgi_room2, NBR_TABLE_CONF_MAX_NEIGHBORS - j);
   if(numprinted >= uip_mss()) {
     return write_mss_error(10);
   }
@@ -419,11 +425,12 @@ PT_THREAD(neighbors(struct httpd_state *s, char *ptr))
 {
   PSOCK_BEGIN(&s->sout);
 
-  for(s->u.count = 0; s->u.count < UIP_DS6_NBR_NB; ++s->u.count) {
-    if(uip_ds6_nbr_cache[s->u.count].isused) {
-      PSOCK_GENERATOR_SEND(&s->sout, make_neighbor, s);
-    }
+  for(s->u.ptr = nbr_table_head(ds6_neighbors);
+      s->u.ptr != NULL;
+      s->u.ptr = nbr_table_next(ds6_neighbors, s->u.ptr)) {
+    PSOCK_GENERATOR_SEND(&s->sout, make_neighbor, s);
   }
+
   PSOCK_GENERATOR_SEND(&s->sout, make_neighbor_roomfor, s);
   PSOCK_END(&s->sout);
 }
@@ -434,11 +441,16 @@ PT_THREAD(neighborsping(struct httpd_state *s, char *ptr))
   PSOCK_BEGIN(&s->sout);
 
   /* Ping nodes */
-  for(s->u.count = 0; s->u.count < UIP_DS6_NBR_NB; ++s->u.count) {
-    if(uip_ds6_nbr_cache[s->u.count].isused) {
-      simple_udp_ping_send_ping(&uip_ds6_nbr_cache[s->u.count].ipaddr);
-      PSOCK_GENERATOR_SEND(&s->sout, make_neighbor, s);
+  for(s->u.ptr = nbr_table_head(ds6_neighbors);
+      s->u.ptr != NULL;
+      s->u.ptr = nbr_table_next(ds6_neighbors, s->u.ptr)) {
+    uip_ipaddr_t *addr;
+    uip_ds6_nbr_t *nbr= s->u.ptr;
+    addr = uip_ds6_nbr_get_ipaddr(nbr);
+    if(addr != NULL) {
+      simple_udp_ping_send_ping(addr);
     }
+    PSOCK_GENERATOR_SEND(&s->sout, make_neighbor, s);
   }
 
   PSOCK_END(&s->sout);
@@ -477,15 +489,27 @@ make_route(void *p)
     if(numprinted >= uip_mss()) {
       return write_mss_error(13);
     }
+
+    uip_ds6_nbr_t *n;
+    uip_ipaddr_t *nexthop;
+    int nopath = 0;
+
+    nexthop = uip_ds6_route_nexthop(r);
+    n = uip_ds6_nbr_lookup(nexthop);
+    if(r != NULL) {
+      nopath = r->state.nopath_received;
+    }
     numprinted += httpd_snprintf((char *)uip_appdata + numprinted,
 				 uip_mss() - numprinted,
 				 httpd_cgi_rtes1,
-				 neighbor_info_get_metric((rimeaddr_t *)&r->nexthop));
+				 nopath);
     if(numprinted >= uip_mss()) {
       return write_mss_error(14);
     }
-    numprinted += httpd_cgi_sprint_ip6(&r->nexthop,
-				       (char *)uip_appdata + numprinted);
+    if(nexthop != NULL) {
+      numprinted += httpd_cgi_sprint_ip6(nexthop,
+                                         (char *)uip_appdata + numprinted);
+    }
     if(numprinted >= uip_mss()) {
       return write_mss_error(15);
     }
@@ -511,7 +535,7 @@ make_route(void *p)
     } else if(simple_udp_ping_has_sent(&r->ipaddr)) {
       numprinted +=
           httpd_snprintf((char *)uip_appdata + numprinted,
-                         uip_mss() - numprinted, "</td><td>sent ping");
+                         uip_mss() - numprinted, "</td><td>Ping scheduled...");
       if(numprinted >= uip_mss()) {
         return write_mss_error(7);
       }
@@ -564,9 +588,9 @@ PT_THREAD(routes(struct httpd_state *s, char *ptr))
 {
   PSOCK_BEGIN(&s->sout);
 
-  for(s->u.ptr = uip_ds6_route_list_head();
+  for(s->u.ptr = uip_ds6_route_head();
       s->u.ptr != NULL;
-      s->u.ptr = list_item_next(s->u.ptr)) {
+      s->u.ptr = uip_ds6_route_next(s->u.ptr)) {
     PSOCK_GENERATOR_SEND(&s->sout, make_route, s);
   }
   PSOCK_GENERATOR_SEND(&s->sout, make_routes_roomfor, s);
@@ -579,9 +603,9 @@ PT_THREAD(routesping(struct httpd_state *s, char *ptr))
 {
   PSOCK_BEGIN(&s->sout);
 
-  for(s->u.ptr = uip_ds6_route_list_head();
+  for(s->u.ptr = uip_ds6_route_head();
       s->u.ptr != NULL;
-      s->u.ptr = list_item_next(s->u.ptr)) {
+      s->u.ptr = uip_ds6_route_next(s->u.ptr)) {
     uip_ds6_route_t *r = (uip_ds6_route_t*) s->u.ptr;
     simple_udp_ping_send_ping(&r->ipaddr);
     PSOCK_GENERATOR_SEND(&s->sout, make_route, s);
@@ -650,7 +674,15 @@ make_addrmap(void *p)
     if(numprinted >= uip_mss()) {
       return write_mss_error(26);
     }
-  }
+
+    numprinted +=
+      httpd_snprintf((char *)uip_appdata + numprinted,
+		     uip_mss() - numprinted, "<td>0x%02x</td>",
+		     m->flags);
+    if(numprinted >= uip_mss()) {
+      return write_mss_error(27);
+    }
+}
   return numprinted;
 }
 /*---------------------------------------------------------------------------*/
@@ -676,6 +708,22 @@ PT_THREAD(rplreset(struct httpd_state *s, char *ptr))
     PSOCK_SEND_STR(&s->sout, "Initiating global repair of RPL network...");
   } else {
     PSOCK_SEND_STR(&s->sout, "Could not start global network repair");
+  }
+  PSOCK_END(&s->sout);
+}
+/*---------------------------------------------------------------------------*/
+static
+PT_THREAD(rplroot(struct httpd_state *s, char *ptr))
+{
+  int ret;
+  PSOCK_BEGIN(&s->sout);
+  ret = simple_rpl_init_dag_immediately();
+  if(ret == 0) {
+    PSOCK_SEND_STR(&s->sout, "Becomming RPL root of the network...");
+  } else if(ret == -1) {
+    PSOCK_SEND_STR(&s->sout, "Failed to create a RPL root: no local address found");
+  } else if(ret == -2) {
+    PSOCK_SEND_STR(&s->sout, "Failed to create a RPL root: no preferred address found");
   }
   PSOCK_END(&s->sout);
 }
@@ -710,6 +758,7 @@ static const char nbrsping_name[] HTTPD_STRING_ATTR = "nbrsping";
 static const char rtes_name[] HTTPD_STRING_ATTR = "routes";
 static const char rtesping_name[] HTTPD_STRING_ATTR = "rtsping";
 static const char rplreset_name[] HTTPD_STRING_ATTR = "rplreset";
+static const char rplroot_name[] HTTPD_STRING_ATTR = "rplroot";
 static const char addrmap_name[] HTTPD_STRING_ATTR = "amap";
 static const char reboot_name[] HTTPD_STRING_ATTR = "reboot";
 
@@ -722,6 +771,7 @@ HTTPD_CGI_CALL(nbrsping, nbrsping_name, neighborsping);
 HTTPD_CGI_CALL(rtes, rtes_name, routes);
 HTTPD_CGI_CALL(rtesping, rtesping_name, routesping);
 HTTPD_CGI_CALL(rplr, rplreset_name, rplreset);
+HTTPD_CGI_CALL(rplrt, rplroot_name, rplroot);
 HTTPD_CGI_CALL(amap, addrmap_name, addrmap);
 HTTPD_CGI_CALL(reboot, reboot_name, reboot_function);
 
@@ -740,6 +790,7 @@ httpd_cgi_init(void)
   httpd_cgi_add(&rtes);
   httpd_cgi_add(&rtesping);
   httpd_cgi_add(&rplr);
+  httpd_cgi_add(&rplrt);
 
   httpd_cgi_add(&reboot);
 

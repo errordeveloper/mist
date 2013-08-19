@@ -52,32 +52,27 @@
  * \name IEEE address locations
  * @{
  */
-#define IEEE_ADDR_LOCATION_PRIMARY   0x0027D058 /**< Primary location */
-#define IEEE_ADDR_LOCATION_SECONDARY 0x0027FBF8 /**< Secondary location */
-/** @} */
-/*---------------------------------------------------------------------------*/
-/**
- * \name Configuration directives controlling the choice of location from
- * where the the IEEE address will be retrieved
- * @{
- */
-#define IEEE_ADDR_USE_PRIMARY                 0
-#define IEEE_ADDR_USE_SECONDARY               1
-#define IEEE_ADDR_USE_HARDCODED               2
+#define IEEE_ADDR_LOCATION_PRIMARY   0x00280028 /**< IEEE address location */
+#define IEEE_ADDR_LOCATION_FLASH     0x0027FFCC /* If an IEEE address
+                                                   has been written to
+                                                   flash, this will be
+                                                   its location. */
 /** @} */
 /*---------------------------------------------------------------------------*/
 /*
- * \brief Read the IEEE address from flash and use it to populate a destination
- *        memory area
+ * \brief Copy the node's IEEE address to a destination memory area
  * \param dst A pointer to the destination area where the IEEE address is to be
  *            written
  * \param len The number of bytes to write to destination area
  *
  * The address will be read from an InfoPage location or a hard-coded address
  * will be used, depending on the value of configuration parameter
- * IEEE_CONF_ADDR_LOCATION
+ * IEEE_ADDR_CONF_HARDCODED
  *
  * This function will copy \e len LS bytes
+ *
+ * The destination address will be populated with dst[0] holding the MSB and
+ * dst[len - 1] holding the LSB
  */
 void ieee_addr_cpy_to(uint8_t *dst, uint8_t len);
 

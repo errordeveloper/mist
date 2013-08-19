@@ -1,16 +1,7 @@
 # Makefile for the STM32L152VB Cortex M3 medium-density microcontroller
 # author Marcus Lunden <marcus@thingsquare.com>
-# ------------------------------------------------------------------------------
-# we do not have support for GCC yet, due to GCC missing USB VCP support.
-# As such, we use IAR per default
 
 .SUFFIXES:
-
-IAR=1
-ifdef GCC
-$(warning GCC compiler is not supported for this platform, use IAR instead (set IAR=1))
-endif
-undefine GCC
 
 # CPU folder
 CONTIKI_CPU=$(CONTIKI)/cpu/arm/stm32l152
@@ -31,10 +22,16 @@ CONTIKI_CPU_DIRS =  . \
 PROP_SYS_ARCH_C = \
 		system_stm32l1xx.c
 
+ifdef IAR
 PROP_SYS_ARCH_S = \
-		startup_stm32l1xx_md.s
+		startup_stm32l1xx_md-iar.s
+else
+PROP_SYS_ARCH_S = \
+		startup_stm32l1xx_md-gcc.s
+endif
 
 # source files: proprietary system sources for USB support
+ifdef IAR
 PROP_USB_ARCH = \
 		SDK_EVAL_VC_Desc.c \
 		SDK_EVAL_VC_Endp.c \
@@ -52,11 +49,12 @@ PROP_USB_ARCH = \
 		usb_mem.c \
 		usb_regs.c \
 		usb_sil.c
+endif
 
 # source files: Contiki arch source files
 CONTIKI_CPU_ARCH=   watchdog.c                                \
                     rtimer-arch.c                             \
-                    clock.c                                   
+                    clock.c
 
 UIPDRIVERS=         uip-arch.c
 
@@ -91,8 +89,14 @@ AS       = iasmarm
 AR       = iarchive
 OBJCOPY  = ielftool
 STRIP    = iobjmanip
-SIZE     = 
-NM       = 
+SIZE     =
+NM       =
+
+%.ihex: %.$(TARGET)
+	$(OBJCOPY) $^ --ihex $@
+%.bin: %.$(TARGET)
+	$(OBJCOPY) --bin $@
+
 
 # Find the path to compiler; this works with cygwin
 ifndef IAR_PATH
@@ -100,7 +104,7 @@ IAR_BIN_PATH := $(shell dirname "`which $(CC)`")
 IAR_PATH_C := $(shell dirname "$(IAR_BIN_PATH)")
 IAR_PATH := $(shell cygpath -m "$(IAR_PATH_C)")
 endif
-		
+
 # ------------compiler flags
 CFLAGS+=\
 	--diag_suppress Pa050 \
@@ -116,13 +120,7 @@ CFLAGS+=\
 	--fpu=None \
 	--dlib_config "$(IAR_PATH)/inc/c/DLib_Config_Normal.h" \
 	-DIAR=1 \
-	-DHSE_VALUE=$(F_CPU)ul \
-	-DUSE_STDPERIPH_DRIVER \
-	-DSTM32L1XX_MD \
-	-DIAR_ARM_CM3 \
-	-DVECT_TAB_FLASH \
-	-DWITH_UIP6
-
+	-DWITH_USB_PRINTF=1
 
 # ------------assembler flags
 ASFLAGS+= -s+ -r -DIAR_ARM_CM3 -cAOM -B -t8 --cpu Cortex-M3 --fpu None
@@ -130,7 +128,7 @@ ASFLAGS+= -s+ -r -DIAR_ARM_CM3 -cAOM -B -t8 --cpu Cortex-M3 --fpu None
 #iasmarm -s+ -w+ -r -DIAR_ARM_CM3 -cAOM -B -t8 --cpu Cortex-M3 --fpu None startup_stm32l1xx_md.s
 
 # ------------archive creation flags
-AROPTS= --create --output 
+AROPTS= --create --output
 
 # ----------linker flags
 # this will also generate log and symbol map files
@@ -148,14 +146,24 @@ LDFLAGS+= \
 	--map contiki-$(TARGET).map \
 	--vfe
 
+CUSTOM_RULE_C_TO_OBJECTDIR_O=yes
+$(OBJECTDIR)/%.o: %.c
+	$(CC) $(CFLAGS) --dependencies=m $(@:.o=.P) $< -o $@
+ifeq ($(HOST_OS),Windows)
+	@$(FINALIZE_CYGWIN_DEPENDENCY)
+endif
+
+%.co: %.c
+	$(CC) $(CFLAGS) -DAUTOSTART_ENABLE $< -o $@
+
+
 #--------------------------------------------------------------------------- GCC
 else
-$(warning Warning, GCC is not supported for STM32L152xB yet. Use IAR instead)
 
 ### Compiler definitions
 GCC      = 1
 CC       = arm-none-eabi-gcc
-LD       = arm-none-eabi-ld
+LD       = arm-none-eabi-gcc
 SIZE     = arm-none-eabi-size
 AS       = arm-none-eabi-as
 AR       = arm-none-eabi-ar
@@ -163,7 +171,17 @@ NM       = arm-none-eabi-nm
 OBJCOPY  = arm-none-eabi-objcopy
 STRIP    = arm-none-eabi-strip
 
-LINKERSCRIPT = $(CONTIKI_CPU)/STM32L10x_128k_16k_flash.ld
+%.ihex: %.$(TARGET)
+	$(OBJCOPY) $^ -I ihex $@
+%.bin: %.$(TARGET)
+	$(OBJCOPY) -I binary $@
+%.co: %.c
+	$(CC) $(CFLAGS) -c -DAUTOSTART_ENABLE $< -o $@
+
+
+ifndef LDSCRIPT
+LDSCRIPT = $(CONTIKI_CPU)/STM32L152.ld
+endif
 
 ASFLAGS += -mcpu=cortex-m3 -mthumb
 
@@ -177,11 +195,9 @@ CFLAGS+=    -I.                                 \
             -I$(CONTIKI)/platform/$(TARGET)     \
             ${addprefix -I,$(APPDIRS)}          \
             ${addprefix -I,$(CONTIKI_CPU_DIRS)} \
-            -Wall -g -O0                        \
+            -Wall -g -Os                        \
             -DWITH_UIP -DWITH_ASCII             \
             -DHSE_VALUE=$(F_CPU)UL              \
-            -ffunction-sections                 \
-            -fdata-sections                     \
             -mcpu=cortex-m3                     \
             -mthumb                             \
             -mfix-cortex-m3-ldrd                \
@@ -191,15 +207,23 @@ CFLAGS+=    -I.                                 \
             -Wl,-gc-sections                    \
             -Wl,-cref
 
+CFLAGS += -DGCC=1
+
+
 #            -Wl,-print-gc-sections              \
 #            -Wl,-verbose                        \
 #            -DMCK=$(MCK)                        \
 
-LDFLAGS += -L $(CONTIKI_CPU)            \
-           -T $(LINKERSCRIPT)           \
-           -mcpu=cortex-m3 -mthumb      \
-           -nostartfiles                
+LDFLAGS += -mcpu=cortex-m3 -mthumb -nostartfiles
+LDFLAGS += -T $(LDSCRIPT)
+LDFLAGS += -Wl,-Map=contiki-$(TARGET).map,--cref,--no-warn-mismatch
+LDFLAGS += -Wl,--gc-sections
+LDFLAGS += -msoft-float
 
+
+LDLIBS = -lm
+
+SMALL=1
 ifeq ($(SMALL),1)
 CFLAGS += -ffunction-sections
 CFLAGS += -fdata-sections
@@ -211,9 +235,16 @@ endif   # /GCC
 #CDEPFLAGS = $(CFLAGS) -D __MAKING_DEPS__
 
 
+CFLAGS+=\
+	-DHSE_VALUE=$(F_CPU)ul \
+	-DUSE_STDPERIPH_DRIVER \
+	-DSTM32L1XX_MD \
+	-DIAR_ARM_CM3 \
+	-DVECT_TAB_FLASH \
+	-DWITH_UIP6
+
 
 # ------------------------------------------------------------------ Build rules
-CUSTOM_RULE_C_TO_OBJECTDIR_O=yes
 CUSTOM_RULE_C_TO_CE=yes
 CUSTOM_RULE_C_TO_CO=yes
 CUSTOM_RULE_C_TO_O=yes
@@ -232,20 +263,11 @@ sed -e 's/ \([A-Z]\):\\/ \/cygdrive\/\L\1\//' -e 's/\\/\//g' \
 rm -f $(@:.o=.P)
 endef
 
-$(OBJECTDIR)/%.o: %.c
-	$(CC) $(CFLAGS) --dependencies=m $(@:.o=.P) $< -o $@
-ifeq ($(HOST_OS),Windows)
-	@$(FINALIZE_CYGWIN_DEPENDENCY)
-endif
-
 $(OBJECTDIR)/%.o: %.s
 	$(AS) $(ASFLAGS) $< -o $@
 
-%.co: %.c
-	$(CC) $(CFLAGS) -DAUTOSTART_ENABLE $< -o $@
-
 %.ce: %.o
-	$(LD) $(LDFLAGS) --relocatable -T $(CONTIKI_CPU)/merge-rodata.ld $< -o $@
+	$(LD) $(LDFLAGS) --relocatable -T $(CONTIKI_CPU)/merge-rodata.ld $< -o $@ $(LDLIBS)
 	$(STRIP) -K _init -K _fini --strip-unneeded -g -x $@
 
 %-stripped.o: %.c
@@ -259,17 +281,12 @@ $(OBJECTDIR)/%.o: %.s
 	$(AS) -o $(notdir $(<:.S=.o)) $<
 
 %.$(TARGET): %.co $(PROJECT_OBJECTFILES) contiki-$(TARGET).a $(STARTUPFOLDER) # $(OBJECTDIR)/empty-symbols.o
-	$(LD) $(LDFLAGS) -o $@ $(filter-out %.a,$^) $(filter %.a,$^)
+	$(LD) $(LDFLAGS) -o $@ $(filter-out %.a,$^) $(filter %.a,$^) $(LDLIBS)
 
-%.ihex: %.$(TARGET)
-	$(OBJCOPY) $^ --ihex $@
 
 %.hex: %.ihex
 	#	@rm $*.hex
 	@mv -f $*.ihex $*.hex
-
-%.bin: %.$(TARGET)
-	$(OBJCOPY) --bin $@
 
 .PHONY: symbols.c
 
@@ -278,6 +295,6 @@ symbols.c:
 	cp ${CONTIKI}/tools/empty-symbols.h symbols.h
 
 # Don't use core/loader/elfloader.c, use elfloader-otf.c instead
-$(OBJECTDIR)/elfloader.o: 
+$(OBJECTDIR)/elfloader.o:
 	echo -n >$@
 

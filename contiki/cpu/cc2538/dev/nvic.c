@@ -47,17 +47,19 @@ static uint32_t *interrupt_enable;
 static uint32_t *interrupt_disable;
 static uint32_t *interrupt_pend;
 static uint32_t *interrupt_unpend;
+
 /*---------------------------------------------------------------------------*/
 void
-nvic_init()
+nvic_init(void)
 {
   interrupt_enable = (uint32_t *)NVIC_EN0;
   interrupt_disable = (uint32_t *)NVIC_DIS0;
   interrupt_pend = (uint32_t *)NVIC_PEND0;
   interrupt_unpend = (uint32_t *)NVIC_UNPEND0;
 
-  /* Provide our interrupt table to the NVIC */
-  REG(SCB_VTABLE) = (NVIC_CONF_VTABLE_BASE | NVIC_CONF_VTABLE_OFFSET);
+  /* We don't need to set REG(SCB_VTABLE) to NVIC_CONF_VTABLE_BASE,
+     because the boot ROM will already have set up our interrupt
+     vector table at boot time. */
 }
 /*---------------------------------------------------------------------------*/
 void

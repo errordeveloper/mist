@@ -65,7 +65,6 @@
 #include "net/uip-ds6.h"
 #include "net/rime.h"
 #include "net/sicslowpan.h"
-#include "net/neighbor-info.h"
 #include "net/netstack.h"
 
 #if UIP_CONF_IPV6
@@ -77,23 +76,19 @@
 /* PRINTFI and PRINTFO are defined for input and output to debug one without changing the timing of the other */
 uint8_t p;
 #include <stdio.h>
-#define PRINTF(...) printf(__VA_ARGS__)
-#define PRINTFI(...) printf(__VA_ARGS__)
-#define PRINTFO(...) printf(__VA_ARGS__)
-#define PRINT6ADDR(addr) PRINTF(" %02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x ", ((uint8_t *)addr)[0], ((uint8_t *)addr)[1], ((uint8_t *)addr)[2], ((uint8_t *)addr)[3], ((uint8_t *)addr)[4], ((uint8_t *)addr)[5], ((uint8_t *)addr)[6], ((uint8_t *)addr)[7], ((uint8_t *)addr)[8], ((uint8_t *)addr)[9], ((uint8_t *)addr)[10], ((uint8_t *)addr)[11], ((uint8_t *)addr)[12], ((uint8_t *)addr)[13], ((uint8_t *)addr)[14], ((uint8_t *)addr)[15])
-#define PRINTLLADDR(lladdr) PRINTF(" %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x ",lladdr->addr[0], lladdr->addr[1], lladdr->addr[2], lladdr->addr[3],lladdr->addr[4], lladdr->addr[5],lladdr->addr[6], lladdr->addr[7])
+#define PRINTFI(...) PRINTF(__VA_ARGS__)
+#define PRINTFO(...) PRINTF(__VA_ARGS__)
 #define PRINTPACKETBUF() PRINTF("RIME buffer: "); for(p = 0; p < packetbuf_datalen(); p++){PRINTF("%.2X", *(rime_ptr + p));} PRINTF("\n")
 #define PRINTUIPBUF() PRINTF("UIP buffer: "); for(p = 0; p < uip_len; p++){PRINTF("%.2X", uip_buf[p]);}PRINTF("\n")
 #define PRINTSICSLOWPANBUF() PRINTF("SICSLOWPAN buffer: "); for(p = 0; p < sicslowpan_len; p++){PRINTF("%.2X", sicslowpan_buf[p]);}PRINTF("\n")
 #else
-#define PRINTF(...)
 #define PRINTFI(...)
 #define PRINTFO(...)
-#define PRINT6ADDR(addr)
-#define PRINTLLADDR(lladdr)
 #define PRINTPACKETBUF()
 #define PRINTUIPBUF()
 #define PRINTSICSLOWPANBUF()
+#define PRINTF(...)
+#define PRINT6ADDR(...)
 #endif /* DEBUG == 1*/
 
 #if UIP_LOGGING
@@ -117,11 +112,6 @@ void uip_log(char *msg);
 #define SICSLOWPAN_COMPRESSION SICSLOWPAN_COMPRESSION_IPV6
 #endif /* SICSLOWPAN_CONF_COMPRESSION */
 #endif /* SICSLOWPAN_COMPRESSION */
-
-#ifndef SICSLOWPAN_CONF_NEIGHBOR_INFO
-/* Default is to use neighbor info updates if using RPL */
-#define SICSLOWPAN_CONF_NEIGHBOR_INFO UIP_CONF_IPV6_RPL
-#endif /* SICSLOWPAN_CONF_NEIGHBOR_INFO */
 
 #define GET16(ptr,index) (((uint16_t)((ptr)[index] << 8)) | ((ptr)[(index) + 1]))
 #define SET16(ptr,index,value) do {     \
@@ -1314,9 +1304,8 @@ compress_hdr_ipv6(rimeaddr_t *rime_destaddr)
 static void
 packet_sent(void *ptr, int status, int transmissions)
 {
-#if SICSLOWPAN_CONF_NEIGHBOR_INFO
-  neighbor_info_packet_sent(status, transmissions);
-#endif /* SICSLOWPAN_CONF_NEIGHBOR_INFO */
+  uip_ds6_link_neighbor_callback(status, transmissions);
+
   if(callback != NULL) {
     callback->output_callback(status);
   }
@@ -1336,6 +1325,11 @@ send_packet(rimeaddr_t *dest)
    * address with the function packetbuf_addr(PACKETBUF_ADDR_RECEIVER).
    */
   packetbuf_set_addr(PACKETBUF_ADDR_RECEIVER, dest);
+
+#if NETSTACK_CONF_BRIDGE_MODE
+  /* This needs to be explicitly set here for bridge mode to work */
+  packetbuf_set_addr(PACKETBUF_ADDR_SENDER,(void*)&uip_lladdr);
+#endif
 
   /* Force acknowledge from sender (test hardware autoacks) */
 #if SICSLOWPAN_CONF_ACK_ALL
@@ -1445,6 +1439,11 @@ output(uip_lladdr_t *localdest)
     framer_hdrlen = 21;
   }
   packetbuf_clear();
+
+  /* We must set the max transmissions attribute again after clearing
+     the buffer. */
+  packetbuf_set_attr(PACKETBUF_ATTR_MAX_MAC_TRANSMISSIONS,
+                     SICSLOWPAN_MAX_MAC_TRANSMISSIONS);
 #else /* USE_FRAMER_HDRLEN */
   framer_hdrlen = 21;
 #endif /* USE_FRAMER_HDRLEN */
@@ -1490,6 +1489,7 @@ output(uip_lladdr_t *localdest)
     q = queuebuf_new_from_packetbuf();
     if(q == NULL) {
       PRINTFO("could not allocate queuebuf for first fragment, dropping packet\n");
+      RIMESTATS_ADD(sicslowpandrops);
       return 0;
     }
     send_packet(&dest);
@@ -1502,6 +1502,7 @@ output(uip_lladdr_t *localdest)
        (last_tx_status == MAC_TX_ERR) ||
        (last_tx_status == MAC_TX_ERR_FATAL)) {
       PRINTFO("error in fragment tx, dropping subsequent fragments.\n");
+      RIMESTATS_ADD(sicslowpandrops);
       return 0;
     }
 
@@ -1536,6 +1537,7 @@ output(uip_lladdr_t *localdest)
       q = queuebuf_new_from_packetbuf();
       if(q == NULL) {
         PRINTFO("could not allocate queuebuf, dropping fragment\n");
+        RIMESTATS_ADD(sicslowpandrops);
         return 0;
       }
       send_packet(&dest);
@@ -1549,11 +1551,13 @@ output(uip_lladdr_t *localdest)
          (last_tx_status == MAC_TX_ERR) ||
          (last_tx_status == MAC_TX_ERR_FATAL)) {
         PRINTFO("error in fragment tx, dropping subsequent fragments.\n");
+        RIMESTATS_ADD(sicslowpandrops);
         return 0;
       }
     }
 #else /* SICSLOWPAN_CONF_FRAG */
     PRINTFO("sicslowpan output: Packet too large to be sent without fragmentation support; dropping packet\n");
+    RIMESTATS_ADD(sicslowpandrops);
     return 0;
 #endif /* SICSLOWPAN_CONF_FRAG */
   } else {
@@ -1590,6 +1594,7 @@ input(void)
   uint16_t frag_size = 0;
   /* offset of the fragment in the IP packet */
   uint8_t frag_offset = 0;
+  uint8_t is_fragment = 0;
 #if SICSLOWPAN_CONF_FRAG
   /* tag of the fragment */
   uint16_t frag_tag = 0;
@@ -1626,6 +1631,7 @@ input(void)
       rime_hdr_len += SICSLOWPAN_FRAG1_HDR_LEN;
       /*      printf("frag1 %d %d\n", reass_tag, frag_tag);*/
       first_fragment = 1;
+      is_fragment = 1;
       break;
     case SICSLOWPAN_DISPATCH_FRAGN:
       /*
@@ -1648,10 +1654,33 @@ input(void)
       if(processed_ip_in_len + packetbuf_datalen() - rime_hdr_len >= frag_size) {
         last_fragment = 1;
       }
+      is_fragment = 1;
       break;
     default:
       break;
   }
+
+  /* We are currently reassembling a packet, but have just received the first
+   * fragment of another packet. We can either ignore it and hope to receive
+   * the rest of the under-reassembly packet fragments, or we can discard the
+   * previous packet altogether, and start reassembling the new packet.
+   *
+   * We discard the previous packet, and start reassembling the new packet.
+   * This lessens the negative impacts of too high SICSLOWPAN_REASS_MAXAGE.
+   */
+#define PRIORITIZE_NEW_PACKETS 1
+#if PRIORITIZE_NEW_PACKETS
+
+  if(!is_fragment) {
+    /* Prioritize non-fragment packets too. */
+    sicslowpan_len = 0;
+    processed_ip_in_len = 0;
+  } else if(processed_ip_in_len > 0 && first_fragment
+      && !rimeaddr_cmp(&frag_sender, packetbuf_addr(PACKETBUF_ADDR_SENDER))) {
+    sicslowpan_len = 0;
+    processed_ip_in_len = 0;
+  }
+#endif /* PRIORITIZE_NEW_PACKETS */
 
   if(processed_ip_in_len > 0) {
     /* reassembly is ongoing */
@@ -1668,6 +1697,7 @@ input(void)
       PRINTFI("sicslowpan input: Dropping 6lowpan packet that is not a fragment of the packet currently being reassembled\n");
       printf("frag %d %d\n", reass_tag, frag_tag);
       printf("drop incoming frag\n");
+      RIMESTATS_ADD(sicslowpandrops);
       return;
     }
   } else {
@@ -1676,6 +1706,12 @@ input(void)
      * start it if we received a fragment
      */
     if((frag_size > 0) && (frag_size <= UIP_BUFSIZE)) {
+      /* We are currently not reassembling a packet, but have received a packet fragment
+       * that is not the first one. */
+      if(is_fragment && !first_fragment) {
+        return;
+      }
+
       sicslowpan_len = frag_size;
       reass_tag = frag_tag;
       timer_set(&reass_timer, SICSLOWPAN_REASS_MAXAGE * CLOCK_SECOND / 16);
@@ -1736,6 +1772,7 @@ input(void)
    */
   if(packetbuf_datalen() < rime_hdr_len) {
     PRINTF("SICSLOWPAN: packet dropped due to header > total packet\n");
+    RIMESTATS_ADD(sicslowpandrops);
     return;
   }
   rime_payload_len = packetbuf_datalen() - rime_hdr_len;
@@ -1749,6 +1786,7 @@ input(void)
           "SICSLOWPAN: packet dropped, minimum required SICSLOWPAN_IP_BUF size: %d+%d+%d+%d=%d (current size: %d)\n",
           UIP_LLH_LEN, uncomp_hdr_len, (uint16_t)(frag_offset << 3),
           rime_payload_len, req_size, sizeof(sicslowpan_buf));
+      RIMESTATS_ADD(sicslowpandrops);
       return;
     }
   }
@@ -1804,10 +1842,6 @@ input(void)
       PRINTF("\n");
     }
 #endif
-
-#if SICSLOWPAN_CONF_NEIGHBOR_INFO
-    neighbor_info_packet_received();
-#endif /* SICSLOWPAN_CONF_NEIGHBOR_INFO */
 
     /* if callback is set then set attributes and call */
     if(callback) {

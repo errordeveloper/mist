@@ -64,8 +64,13 @@ AR = arm-none-eabi-ar
 OC = arm-none-eabi-objcopy
 SIZE = arm-none-eabi-size
 
+ifdef WERROR
+CFLAGS+=-Werror
+endif
 
+ifndef LDSCRIPT
 LDSCRIPT = $(OBJECTDIR)/cc2538.ld
+endif # LDSCRIPT
 
 CFLAGS += -O2 -mcpu=cortex-m3 -mthumb -mlittle-endian
 CFLAGS += -fshort-enums -fomit-frame-pointer -fno-strict-aliasing
@@ -115,8 +120,8 @@ USB_ARCH_SOURCEFILES += usb-arch.c usb-serial.c cdc-acm-descriptors.c
 CONTIKI_SOURCEFILES += $(CONTIKI_CPU_SOURCEFILES) $(DEBUG_IO_SOURCEFILES)
 CONTIKI_SOURCEFILES += $(USB_CORE_SOURCEFILES) $(USB_ARCH_SOURCEFILES)
 
-### Don't treat the .elf as intermediate
-.PRECIOUS: %.elf
+### Don't treat the .$(TARGET) as intermediate
+.PRECIOUS: %.$(TARGET)
 
 ### Always re-build ieee-addr.o in case the command line passes a new NODEID
 FORCE:
@@ -127,10 +132,10 @@ $(OBJECTDIR)/ieee-addr.o: ieee-addr.c FORCE
 ### Compilation rules
 CUSTOM_RULE_LINK=1
 
-%.elf: $(TARGET_STARTFILES) %.co $(PROJECT_OBJECTFILES) $(PROJECT_LIBRARIES) contiki-$(TARGET).a $(LDSCRIPT)
+%.$(TARGET): $(TARGET_STARTFILES) %.co $(PROJECT_OBJECTFILES) $(PROJECT_LIBRARIES) contiki-$(TARGET).a $(LDSCRIPT)
 	$(LD) $(LDFLAGS) ${filter-out $(LDSCRIPT) %.a,$^} ${filter %.a,$^} -o $@
 
-%.$(TARGET): %.elf
+%.bin: %.$(TARGET)
 	$(OC) $(OCFLAGS) $< $@
 	$(SIZE) $<
 

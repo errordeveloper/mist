@@ -16,10 +16,15 @@
 #undef UIP_FALLBACK_INTERFACE
 #define UIP_FALLBACK_INTERFACE ip64_uip_fallback_interface
 
-#undef NETSTACK_CONF_MAC
-#undef NETSTACK_CONF_RDC
+#include "mist-conf-const.h"
+#define MIST_CONF_NETSTACK (MIST_CONF_DROWSIE)
 
-#define NETSTACK_CONF_MAC     csma_driver
-#define NETSTACK_CONF_RDC     nullrdc_driver
+#include "mist-default-conf.h"
+
+#define NETSTACK_RADIO_MAX_PAYLOAD_LEN 125
+
+
+#undef QUEUEBUF_CONF_NUM
+#define QUEUEBUF_CONF_NUM 16
 
 #endif /* PLATFORM_CONF_H */

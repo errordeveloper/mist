@@ -52,22 +52,11 @@
 #define LEDS_CONF_LED4		      8     /* blue */
 #define LEDS_CONF_LED5		      5     /* yellow */
 
-#define LEDS_CONF_RED			          (1<<LEDS_CONF_LED3)
-#define LEDS_CONF_GREEN			        (1<<LEDS_CONF_LED1)
-#define LEDS_CONF_BLUE			        (1<<LEDS_CONF_LED4)
-
 //#define FIXED_NET_ADDRESS             1
 //#define NET_ADDR_A                    0x2001
 //#define NET_ADDR_B                    0xdb8
 //#define NET_ADDR_C                    0xbbbb
 //#define NET_ADDR_D                    0xabcd
-
-#define UART1_CONF_TX_WITH_INTERRUPT        0
-#define WITH_SERIAL_LINE_INPUT              1
-#define ENERGEST_CONF_ON                    0
-#define TELNETD_CONF_NUMLINES               6
-#define NETSTACK_CONF_RADIO                 spirit_radio_driver
-#define NETSTACK_RADIO_MAX_PAYLOAD_LEN      96 /* spirit1-config.h */
 
 /* define ticks/second for slow and fast clocks. Notice that these should be a
   power of two, eg 64,128,256,512 etc, for efficiency as POT's can be optimized
@@ -94,5 +83,7 @@ typedef uint32_t        u32_t;
 typedef  int32_t        s32_t;
 typedef unsigned short  uip_stats_t;
 
+#define MULTICHAN_CONF_SET_CHANNEL(x)
+#define MULTICHAN_CONF_READ_RSSI(x) 0
 
 #endif /* __PLATFORM_CONF_H__ */

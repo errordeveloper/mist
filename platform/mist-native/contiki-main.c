@@ -229,6 +229,7 @@ main(int argc, char **argv)
 
   select_set_callback(STDIN_FILENO, &stdin_fd);
 
+  simple_rpl_init();
   ip64_init();
 
   while(1) {

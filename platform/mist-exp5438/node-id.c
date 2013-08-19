@@ -97,13 +97,13 @@ node_id_burn(unsigned short id)
   memcpy(&val, &data[0], 2);
   flash_write((unsigned long)ADDR_INFOMEM_A, val);
   memcpy(&val, &data[2], 2);
-  flash_write((unsigned long)(ADDR_INFOMEM_A+2), val);
+  flash_write((unsigned long)(ADDR_INFOMEM_A + 2), val);
   memcpy(&val, &data[4], 2);
-  flash_write((unsigned long)(ADDR_INFOMEM_A+4), val);
+  flash_write((unsigned long)(ADDR_INFOMEM_A + 4), val);
   memcpy(&val, &data[6], 2);
-  flash_write((unsigned long)(ADDR_INFOMEM_A+6), val);
+  flash_write((unsigned long)(ADDR_INFOMEM_A + 6), val);
 
-  flash_write((unsigned long)(ADDR_INFOMEM_A+8), id);
+  flash_write((unsigned long)(ADDR_INFOMEM_A + 8), id);
   flash_done();
 }
 /*---------------------------------------------------------------------------*/

@@ -90,27 +90,27 @@ cc1120_arch_spi_rw_byte(unsigned char c)
 }
 /*---------------------------------------------------------------------------*/
 int
-cc1120_arch_spi_rw(unsigned char *inBuf, unsigned char *outBuf, int len)
+cc1120_arch_spi_rw(unsigned char *inbuf, unsigned char *outbuf, int len)
 {
   int i;
-  if(inBuf == NULL && outBuf == NULL) {
+  if(inbuf == NULL && outbuf == NULL) {
     /* error: both buffers are NULL */
     return 1;
-  } else if(inBuf == NULL) {
+  } else if(inbuf == NULL) {
     for(i = 0; i < len; i++) {
-      SPI_WRITE(outBuf[i]);
+      SPI_WRITE(outbuf[i]);
     }
-  } else if(outBuf == NULL) {
+  } else if(outbuf == NULL) {
     for(i = 0; i < len; i++) {
-      SPI_READ(inBuf[i]);
+      SPI_READ(inbuf[i]);
     }
   } else {
     for(i = 0; i < len; i++) {
       SPI_WAITFORTx_BEFORE();
-      SPI_TXBUF = outBuf[i];
+      SPI_TXBUF = outbuf[i];
       SPI_WAITFOREOTx();
       SPI_WAITFOREORx();
-      inBuf[i] = SPI_RXBUF;
+      inbuf[i] = SPI_RXBUF;
     }
   }
   return 0;

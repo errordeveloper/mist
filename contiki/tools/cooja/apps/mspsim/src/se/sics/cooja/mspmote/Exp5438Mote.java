@@ -33,16 +33,13 @@ import java.io.File;
 
 import org.apache.log4j.Logger;
 
-import se.sics.cooja.MoteInterface;
 import se.sics.cooja.Simulation;
-import se.sics.cooja.mspmote.interfaces.Msp802154Radio;
 import se.sics.mspsim.platform.GenericNode;
 import se.sics.mspsim.platform.ti.Exp1101Node;
 import se.sics.mspsim.platform.ti.Exp1120Node;
 import se.sics.mspsim.platform.ti.Exp5438Node;
-
-import com.thingsquare.cooja.mspsim.CC1101Radio;
-import com.thingsquare.cooja.mspsim.CC1120Radio;
+import se.sics.mspsim.platform.ti.Trxeb1120Node;
+import se.sics.mspsim.platform.ti.Trxeb2520Node;
 
 /**
  * @author Fredrik Osterlind
@@ -58,25 +55,28 @@ public class Exp5438Mote extends MspMote {
   }
 
   protected boolean initEmulator(File fileELF) {
-	  /* Check radio type */
-	  exp5438Node = null;
-	  for (Class<? extends MoteInterface> clazz : getType().getMoteInterfaceClasses()) {
-		  if (clazz == CC1101Radio.class) {
-			  exp5438Node = new Exp1101Node();
-			  desc = "Exp5438+CC1101";
-			  break;
-		  } else if (clazz == CC1120Radio.class) {
-			  exp5438Node = new Exp1120Node();
-			  desc = "Exp5438+CC1120";
-			  break;
-		  } else if (clazz == Msp802154Radio.class) {
-			  exp5438Node = new Exp5438Node();
-			  desc = "Exp5438+CC2420";
-			  break;
-		  }
-	  }
-	  if (exp5438Node == null) {
-		  throw new IllegalStateException("unknown radio");
+	  /* Hack: Try to figure out what type of Mspsim-node we should be used by checking file extension */
+	  String filename = fileELF.getName();
+	  if (filename.endsWith(".exp1101")) {
+		  exp5438Node = new Exp1101Node();
+		  desc = "Exp5438+CC1101";
+	  } else if (filename.endsWith(".exp1120")) {
+		  exp5438Node = new Exp1120Node();
+		  desc = "Exp5438+CC1120";
+	  } else if (filename.endsWith(".trxeb2520")) {
+		  exp5438Node = new Trxeb2520Node();
+		  desc = "Trxeb2520";
+	  } else if (filename.endsWith(".trxeb1120")) {
+		  exp5438Node = new Trxeb1120Node(false);
+		  desc = "Trxeb1120";
+	  } else if (filename.endsWith(".eth1120")) {
+		  exp5438Node = new Trxeb1120Node(true);
+		  desc = "Eth1120";
+	  } else if (filename.endsWith(".exp2420") || filename.endsWith(".exp5438")) {
+		  exp5438Node = new Exp5438Node();
+		  desc = "Exp5438+CC2420";
+	  } else {
+		  throw new IllegalStateException("unknown file extension, cannot figure out what Mspsim node type to use: " + filename);
 	  }
 	  
     try {

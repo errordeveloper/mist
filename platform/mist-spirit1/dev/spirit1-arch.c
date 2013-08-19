@@ -62,6 +62,8 @@ M2S_GPIO_3_EXTI_IRQ_HANDLER(void)
 }
 /*---------------------------------------------------------------------------*/
 /* use the SPI-port to acquire the status bytes from the radio. */
+#define CS_TO_SCLK_DELAY  0x0100
+
 uint16_t
 spirit1_arch_refresh_status(void)
 {
@@ -74,6 +76,10 @@ spirit1_arch_refresh_status(void)
   
   /* CS is active low */
   SPIRIT_SPI_PERIPH_CS_PORT->BSRRH = SPIRIT_SPI_PERIPH_CS_PIN;
+  {
+    volatile uint32_t iv;
+    for(iv = 0; iv < CS_TO_SCLK_DELAY; iv++);
+  }  
   
   /* send arbitrary header bytes and read out MC_STATE from SPI rx buffer */
   for(i = 0; i < 2; i++) {

@@ -4,13 +4,13 @@
 # Default Mist apps
 PLATFORMAPPS += aes multichan drowsie drowsie-multichannel
 
-# Auto-detect IAR compiler, use it unless we explicitly told make that IAR=0
-ifndef IAR
-ifneq ($(shell which icc430 2>/dev/null),)
-${info Using autodetected IAR compiler}
-IAR=1
-endif
-endif
+## Auto-detect IAR compiler, use it unless we explicitly told make that IAR=0
+#ifndef IAR
+#ifneq ($(shell which icc430 2>/dev/null),)
+#${info Using autodetected IAR compiler}
+#IAR=1
+#endif
+#endif
 
 ifdef IAR
 CFLAGS+=--dlib_config "$(IAR_PATH)/lib/dlib/dl430xlfn.h" -e --vla -Ohz --multiplier=32 --multiplier_location=4C0 --hw_workaround=CPU40 --core=430X  --data_model large --double=32 -D__MSP430F5438A__=1
@@ -22,14 +22,16 @@ ARCH=msp430.c leds.c watchdog.c \
      spix.c \
      rtimer-arch.c node-id.c leds-arch.c uart1x.c lcd.c \
      hal_lcd.c hal_lcd_fonts.c duty-cycle-scroller.c cfs-ram.c hal-pmm.c \
+     rimestats.c stack-avail.c
 
 ARCH+=$(ARCH_RADIO_SOURCES)
 
 ifeq ($(WITH_SLIP),1)
-ARCH += slip_uart1.c
+CFLAGS += -DWITH_SLIP=1
 else
-ARCH += uart1-putchar.c
+#ARCH += uart1-putchar.c
 endif
+ARCH += slip_uart1.c
 
 ifdef NODEID
 CFLAGS+=-DNODEID=$(NODEID)
@@ -80,22 +82,30 @@ LDFLAGSNO += -xm "$(IAR_PATH)/lib/dlib/dl430xlfn.r43" -f $(LINKERMAP) -D_STACK_S
 LDFLAGS += $(LDFLAGSNO) -Felf -yn
 endif
 
-
+ifndef IAR
 ifeq "$(shell msp430-gcc -dumpversion)" "4.7.0"
-ifndef GCC470FLAGS
-GCC470FLAGS += -mmemory-model=medium \
-	          -ffunction-sections \
-               -fdata-sections
-endif
-CFLAGS += $(GCC470FLAGS)
-LDFLAGS += $(GCC470FLAGS)
-endif
+TARGET_MEMORY_MODEL ?= medium
+CFLAGS += -mmemory-model=$(TARGET_MEMORY_MODEL)
+CFLAGS += -ffunction-sections -fdata-sections -mcode-region=far -mdata-region=far
+LDFLAGS += -mmemory-model=$(TARGET_MEMORY_MODEL) -Wl,-gc-sections
+endif # mspgcc 4.7.0
+endif # IAR
+
+OBJCOPY=msp430-objcopy
+%.ihex: %.$(TARGET)
+	$(OBJCOPY) $^ -O ihex $@
 
 %.hex: %.ihex
 	mv $< $@
 
 %.upload: %.hex
+ifndef PROGPORT
+	@echo You must define PROGPORT.
+	@echo Example:
+	@echo make app.upload PROGPORT=COM11
+else
 	msp430flasher -s -n msp430x5438a -e ERASE_MAIN -w $< -v -i $(PROGPORT) -z [VCC]
+endif
 
 %.upload-mspdebug: %.hex
 ifndef COMPORT
@@ -113,8 +123,9 @@ endif
 # Serialdump rules
 ifeq ($(HOST_OS),Windows)
   SERIALDUMP = serialdump-windows
-  
+ifndef CYGWIN_DEV_ID
   CYGWIN_DEV_ID="MSP-EXP430F5438 USB - Serial Port"
+endif
   include $(CONTIKI)/tools/cygwin/Makefile.cygwin
 endif
 ifeq ($(HOST_OS),Darwin)
@@ -128,3 +139,18 @@ endif
 login:
 	@echo "Connecting to $(COMPORT)"
 	$(CONTIKI)/tools/sky/$(SERIALDUMP) -b115200 $(COMPORT)
+
+%.ramusage: %.$(TARGET)
+	$(NM) -S $< --size-sort --line-numbers | grep -v " T " | grep -v " t "
+%.romusage: %.$(TARGET)
+	$(NM) -S $< --size-sort --line-numbers | grep -v " b " | grep -v " B " | grep -v " d " | grep -v " D "
+
+
+ifdef NODEIDS
+%.hexfiles:
+	$(foreach id,$(NODEIDS),make TARGET=$(TARGET) BURN_NODEID=1 NODEID=$(id) $*.hex ; mv $*.hex $*-$(id).hex ; rm $*.$(TARGET); )
+else # NODEIDS
+%.hexfiles:
+	@echo usage: make burn-nodeid.hexfiles NODEIDS="1 2 3 4 5 6 7 8 9 10"
+	@echo to create 10 .hex files
+endif # NODEIDS

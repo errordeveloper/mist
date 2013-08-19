@@ -53,8 +53,7 @@
 */
 
 
-#define CS_TO_SCLK_DELAY  0x0001
-#define CLK_TO_CS_DELAY   0x0001
+#define CS_TO_SCLK_DELAY  0x0100
 
 /** @defgroup SPI_Headers
 * @{

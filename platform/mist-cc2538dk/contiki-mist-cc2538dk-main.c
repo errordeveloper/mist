@@ -66,6 +66,7 @@
 #include "reg.h"
 #include "ieee-addr.h"
 #include "lpm.h"
+#include "netstack-aes.h"
 
 #include <stdint.h>
 #include <string.h>

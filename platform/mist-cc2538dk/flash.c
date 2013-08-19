@@ -53,7 +53,7 @@
  * application must pat the watchdog between calls.
  */
 void
-flash_erase_page(unsigned long addr)
+flash_clear(unsigned long addr)
 {
   uint32_t page;
 
@@ -75,14 +75,11 @@ flash_erase_page(unsigned long addr)
   //printf(" - 0x%lx)\n", page);
 
   /* Erase one flash page: erase, wait until done, clean up */
-  INTERRUPTS_DISABLE();
   while(REG(FLASH_CTRL_FCTL) & FLASH_BITFIELD_BUSY);
 
   REG(FLASH_CTRL_FADDR) = page;
   REG(FLASH_CTRL_FCTL) |= FLASH_BITFIELD_ERASE;
   while(REG(FLASH_CTRL_FCTL) & FLASH_BITFIELD_BUSY);
-
-  INTERRUPTS_ENABLE();
 }
 /*---------------------------------------------------------------------------*/
 /*
@@ -102,51 +99,73 @@ flash_erase_page(unsigned long addr)
 __attribute__((section(".data")))
 #endif
 void
-flash_write(unsigned long addr, uint32_t data)
+flash_write(unsigned long addr16, uint16_t data16)
 {
+  uint32_t data32;
+  unsigned long addr32;
+
   /* sanity check address; refer to the datasheet */
-  if((addr + FLASH_MIN_WRITE) >= FLASH_END || addr < FLASH_START) {
+  if((addr16 + FLASH_MIN_WRITE) >= FLASH_END || addr16 < FLASH_START) {
 #if PUT_IN_DATA == 0
-    printf("*** WW address error. FST: %lu addr: %lu FEND: %lu \n", FLASH_START, addr, FLASH_END);
+    printf("*** WW address error. FST: %lu addr: %lu FEND: %lu \n",
+           FLASH_START, addr16, FLASH_END);
 #endif
     /* invalid address */
     return;
   }
 
+
+  /* The flash API is a 16-bit API, so we need to read out a 32-bit
+     value, modify the correct 16 bits, and write the 32-bit value
+     back to the correct location. */
+
+  /* First, we read out 32 bits from the memory. */
+  addr32 = addr16 & 0xfffffffc; /* Mask away the low 2 bits. */
+  memcpy(&data32, (void *)(intptr_t)addr32, sizeof(data32));
+
+  /* Modify the correct 16 bits of the value that we just read */
+  if((addr16 & 0x02) == 0) {
+    data32 = (data32 & 0xffff0000) | (data16 & 0xffff);
+  } else {
+    data32 = (data32 & 0x0000ffff) | (data16 << 16);
+  }
+
   /* check that the flash controller is not currently in use */
   while(REG(FLASH_CTRL_FCTL) & FLASH_BITFIELD_BUSY);
 
-  INTERRUPTS_DISABLE();
-
   /*  The flash-write sequence algorithm is as follows:*/
   /*  1. Set FADDR to the start address.*/
-  REG(FLASH_CTRL_FADDR) = addr;
+  REG(FLASH_CTRL_FADDR) = addr32;
 
   /*  2. Set FCTL.WRITE to 1. This starts the write-sequence state machine.*/
   REG(FLASH_CTRL_FCTL) |= FLASH_BITFIELD_WRITE;
 
   /*  3. Write the 32-bit data to FWDATA (since the last time FCTL.FULL became 0,*/
   /*  if not first iteration). FCTL.FULL goes high after writing to FWDATA*/
-  REG(FLASH_CTRL_FWDATA) = data;
+  REG(FLASH_CTRL_FWDATA) = data32;
 
   /*  4. Wait until FCTL.FULL goes low. (The flash controller has started programming*/
   /*  the 4 bytes written in step 3 and is ready to buffer the next 4 bytes).*/
   while(REG(FLASH_CTRL_FCTL) & FLASH_BITFIELD_FULL);
-
-  INTERRUPTS_ENABLE();
+}
+/*---------------------------------------------------------------------------*/
+uint32_t
+flash_read(unsigned long addr)
+{
+  return *((unsigned long *)addr);
 }
 /*---------------------------------------------------------------------------*/
 /* empty legacy API function */
 void
 flash_setup(void)
 {
-  ;
+  INTERRUPTS_DISABLE();
 }
 /*---------------------------------------------------------------------------*/
 /* empty legacy API function */
 void
 flash_done(void)
 {
-  ;
+  INTERRUPTS_ENABLE();
 }
 /*---------------------------------------------------------------------------*/

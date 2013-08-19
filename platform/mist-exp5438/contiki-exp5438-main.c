@@ -132,9 +132,6 @@ main(int argc, char **argv)
   leds_on(LEDS_RED);
 
   uart1_init(BAUD2UBR(115200)); /* Must come before first printf */
-#if WITH_UIP
-  slip_arch_init(BAUD2UBR(115200));
-#endif /* WITH_UIP */
 
   leds_on(LEDS_GREEN);
   /* xmem_init(); */
@@ -146,7 +143,7 @@ main(int argc, char **argv)
   watchdog_init();
   
   PRINTF(CONTIKI_VERSION_STRING "\n");
-  PRINTF("Compiled at %s, %s\n", __TIME__, __DATE__);
+  /*  PRINTF("Compiled at %s, %s\n", __TIME__, __DATE__);*/
 
   /*
    * Hardware initialization done!
@@ -160,6 +157,7 @@ main(int argc, char **argv)
 
 #ifdef BURN_NODEID
   node_id_burn(node_id);
+  node_id_restore(); /* also configures node_mac[] */
 #endif /* BURN_NODEID */
 #else
   node_id_restore(); /* also configures node_mac[] */
@@ -190,23 +188,32 @@ main(int argc, char **argv)
   printf("Starting up cc11xx radio at channel %d\n", RF_CHANNEL);
   cc11xx_channel_set(RF_CHANNEL);
 #endif /* CC11xx_CC1101 || CC11xx_CC1120 */
-#if CONFIGURE_CC2420
+#if CONFIGURE_CC2420 || CONFIGURE_CC2520
   {
     uint8_t longaddr[8];
     uint16_t shortaddr;
 
-    shortaddr = (rimeaddr_node_addr.u8[0] << 8) +
-      rimeaddr_node_addr.u8[1];
+    shortaddr = (rimeaddr_node_addr.u8[0] << 8) + rimeaddr_node_addr.u8[1];
     memset(longaddr, 0, sizeof(longaddr));
     rimeaddr_copy((rimeaddr_t *)&longaddr, &rimeaddr_node_addr);
-    printf("MAC %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\n",
-           longaddr[0], longaddr[1], longaddr[2], longaddr[3],
-           longaddr[4], longaddr[5], longaddr[6], longaddr[7]);
+    printf("MAC %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\n", longaddr[0],
+           longaddr[1], longaddr[2], longaddr[3], longaddr[4], longaddr[5],
+           longaddr[6], longaddr[7]);
 
+#if CONFIGURE_CC2420
     cc2420_set_pan_addr(IEEE802154_PANID, shortaddr, longaddr);
+#endif /* CONFIGURE_CC2420 */
+#if CONFIGURE_CC2520
+    cc2520_set_pan_addr(IEEE802154_PANID, shortaddr, longaddr);
+#endif /* CONFIGURE_CC2520 */
   }
+#if CONFIGURE_CC2420
   cc2420_set_channel(RF_CHANNEL);
 #endif /* CONFIGURE_CC2420 */
+#if CONFIGURE_CC2520
+  cc2520_set_channel(RF_CHANNEL);
+#endif /* CONFIGURE_CC2520 */
+#endif /* CONFIGURE_CC2420 || CONFIGURE_CC2520 */
 
   NETSTACK_RADIO.on();
 
@@ -224,12 +231,11 @@ main(int argc, char **argv)
 
   queuebuf_init();
 
-  NETSTACK_RDC.init();
-  NETSTACK_MAC.init();
-  NETSTACK_NETWORK.init();
+  netstack_init();
 
-  printf("%s %lu %u\n",
+  printf("%s/%s %lu %u\n",
          NETSTACK_RDC.name,
+         NETSTACK_MAC.name,
          CLOCK_SECOND / (NETSTACK_RDC.channel_check_interval() == 0 ? 1:
                          NETSTACK_RDC.channel_check_interval()),
          RF_CHANNEL);
@@ -251,7 +257,7 @@ main(int argc, char **argv)
   if(1) {
     uip_ipaddr_t ipaddr;
     int i;
-    uip_ip6addr(&ipaddr, 0xaaaa, 0, 0, 0, 0, 0, 0, 0);
+    uip_ip6addr(&ipaddr, 0xfc00, 0, 0, 0, 0, 0, 0, 0);
     uip_ds6_set_addr_iid(&ipaddr, &uip_lladdr);
     uip_ds6_addr_add(&ipaddr, 0, ADDR_TENTATIVE);
     printf("Tentative global IPv6 address ");
@@ -265,9 +271,7 @@ main(int argc, char **argv)
 
 #else /* WITH_UIP6 */
 
-  NETSTACK_RDC.init();
-  NETSTACK_MAC.init();
-  NETSTACK_NETWORK.init();
+  netstack_init();
 
   printf("%s %lu %u\n",
          NETSTACK_RDC.name,
@@ -301,11 +305,36 @@ main(int argc, char **argv)
 #endif /* TIMESYNCH_CONF_ENABLED */
 
 
+#if CC11xx_CC1101 || CC11xx_CC1120
+  printf("cc11xx radio at channel %d\n", RF_CHANNEL);
+  cc11xx_channel_set(RF_CHANNEL);
+#endif /* CC11xx_CC1101 || CC11xx_CC1120 */
+#if CONFIGURE_CC2420
+  {
+    uint8_t longaddr[8];
+    uint16_t shortaddr;
+
+    shortaddr = (rimeaddr_node_addr.u8[0] << 8) +
+      rimeaddr_node_addr.u8[1];
+    memset(longaddr, 0, sizeof(longaddr));
+    rimeaddr_copy((rimeaddr_t *)&longaddr, &rimeaddr_node_addr);
+    printf("MAC %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\n",
+           longaddr[0], longaddr[1], longaddr[2], longaddr[3],
+           longaddr[4], longaddr[5], longaddr[6], longaddr[7]);
+
+    cc2420_set_pan_addr(IEEE802154_PANID, shortaddr, longaddr);
+  }
+  cc2420_set_channel(RF_CHANNEL);
+#endif /* CONFIGURE_CC2420 */
+  NETSTACK_RADIO.on();
+
   /*  process_start(&sensors_process, NULL);
       SENSORS_ACTIVATE(button_sensor);*/
 
   energest_init();
   ENERGEST_ON(ENERGEST_TYPE_CPU);
+
+  simple_rpl_init();
 
   watchdog_start();
 
@@ -313,6 +342,20 @@ main(int argc, char **argv)
   autostart_start(autostart_processes);
 
   duty_cycle_scroller_start(CLOCK_SECOND * 2);
+
+#if IP64_CONF_UIP_FALLBACK_INTERFACE_SLIP && WITH_SLIP
+  /* Start the SLIP */
+  printf("Initiating SLIP: my IP is 172.16.0.2...\n");
+  slip_arch_init(0);
+  {
+    uip_ip4addr_t ipv4addr, netmask;
+
+    uip_ipaddr(&ipv4addr, 172, 16, 0, 2);
+    uip_ipaddr(&netmask, 255, 255, 255, 0);
+    ip64_set_ipv4_address(&ipv4addr, &netmask);
+  }
+  uart1_set_input(slip_input_byte);
+#endif /* IP64_CONF_UIP_FALLBACK_INTERFACE_SLIP */
 
   /*
    * This is the scheduler loop.

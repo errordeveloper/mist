@@ -51,8 +51,10 @@ ISR(CC2520_IRQ, cc2520_port1_interrupt)
 {
   ENERGEST_ON(ENERGEST_TYPE_IRQ);
 
-  if(cc2520_interrupt()) {
-    LPM4_EXIT;
+  if(P1IV == (2 * (1 + CC2520_FIFOP_PIN))) {
+    if(cc2520_interrupt()) {
+      LPM4_EXIT;
+    }
   }
 
   ENERGEST_OFF(ENERGEST_TYPE_IRQ);
@@ -71,7 +73,9 @@ cc2520_arch_init(void)
   CC2520_FIFOP_PORT(DIR) &= ~(BV(CC2520_FIFOP_PIN));
   CC2520_FIFO_PORT(DIR) &= ~(BV(CC2520_FIFO_PIN));
   CC2520_CCA_PORT(DIR) &= ~(BV(CC2520_CCA_PIN));
+#ifdef CC2520_SFD_PORT
   CC2520_SFD_PORT(DIR) &= ~(BV(CC2520_SFD_PIN));
+#endif
 
 #if CONF_SFD_TIMESTAMPS
   cc2520_arch_sfd_init();

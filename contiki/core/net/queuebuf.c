@@ -356,6 +356,7 @@ queuebuf_new_from_packetbuf(void)
 #else
       if(buf->ram_ptr == NULL) {
         PRINTF("queuebuf_new_from_packetbuf: could not queuebuf data\n");
+        RIMESTATS_ADD(queuebuf_outofbuf);
         return NULL;
       }
       buframptr = buf->ram_ptr;
@@ -369,6 +370,7 @@ queuebuf_new_from_packetbuf(void)
         if(queuebuf_flush_tmpdata() == -1) {
           /* We were unable to write the data in the swap */
           memb_free(&bufmem, buf);
+          RIMESTATS_ADD(queuebuf_outofbuf);
           return NULL;
         }
       }
@@ -381,12 +383,16 @@ queuebuf_new_from_packetbuf(void)
       if(queuebuf_len == queuebuf_max_len + 1) {
   memb_free(&bufmem, buf);
   queuebuf_len--;
+  RIMESTATS_ADD(queuebuf_outofbuf);
   return NULL;
       }
 #endif /* QUEUEBUF_STATS */
 
     } else {
       PRINTF("queuebuf_new_from_packetbuf: could not allocate a queuebuf\n");
+    }
+    if(buf == NULL) {
+      RIMESTATS_ADD(queuebuf_outofbuf);
     }
     return buf;
   }

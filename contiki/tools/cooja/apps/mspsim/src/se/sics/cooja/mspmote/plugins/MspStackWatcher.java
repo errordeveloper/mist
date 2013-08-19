@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 
+import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JToggleButton;
 import javax.swing.SwingUtilities;
@@ -78,6 +79,10 @@ public class MspStackWatcher extends VisPlugin implements MotePlugin {
 
   private MoteTimeEvent increasePosTimeEvent;
 
+  private Integer userOverriddenStack = null;
+
+  private JLabel memLabel = new JLabel("");
+  
   public MspStackWatcher(Mote mote, Simulation simulationToVisualize, GUI gui) {
     super("Msp Stack Watcher: " + mote, gui);
     this.mspMote = (MspMote) mote;
@@ -91,7 +96,7 @@ public class MspStackWatcher extends VisPlugin implements MotePlugin {
       public void actionPerformed(ActionEvent e) {
         if (toggleButton.isSelected()) {
           toggleButton.setText("Monitoring for stack overflows");
-          if (!activate()) {
+          if (!activate(true)) {
             toggleButton.setBackground(Color.RED);
             toggleButton.setText("Monitoring for stack overflows - FAILED!");
             toggleButton.setSelected(false);
@@ -117,15 +122,44 @@ public class MspStackWatcher extends VisPlugin implements MotePlugin {
     };
     simulation.scheduleEvent(increasePosTimeEvent, simulation.getSimulationTime());
 
+    add(BorderLayout.NORTH, memLabel);
     add(BorderLayout.CENTER, stackUI);
     add(BorderLayout.SOUTH, toggleButton);
 
     setSize(400, 300);
   }
 
-  private boolean activate() {
+  private boolean activate(boolean gui) {
     try {
       int stack = ((MspMoteType) mspMote.getType()).getELF().getMap().stackStartAddress; 
+
+      if (gui) {
+    	  String s = (String)JOptionPane.showInputDialog(
+    			  GUI.getTopParentContainer(),
+    			  "With default linker scripts the stack starts at 0x" + Integer.toHexString(stack) + ".\n" +
+    					  "If you are using a modified linker script, you may here correct the stack start address.",
+    					  "Enter stack start address",
+    					  JOptionPane.PLAIN_MESSAGE,
+    					  null,
+    					  null,
+    					  "0x" + Integer.toHexString(userOverriddenStack!=null?userOverriddenStack:stack));
+    	  userOverriddenStack = null;
+    	  if (s != null) {
+    		  try {
+    			  int newStack = Integer.decode(s); 
+    			  if (newStack != stack) {
+    				  userOverriddenStack = newStack;
+    			  }
+    		  } catch (Exception e) {
+    			  logger.error("Error parsing provided stack address: " + s, e);
+    			  return false;
+    		  }
+    	  }
+      }
+	  if (userOverriddenStack != null) {
+		  stack = userOverriddenStack; 
+	  }
+      
       int heap = ((MspMoteType) mspMote.getType()).getELF().getMap().heapStartAddress;
       if (stack < 0) {
         stack = cpu.config.ramStart + cpu.config.ramSize;
@@ -133,6 +167,8 @@ public class MspStackWatcher extends VisPlugin implements MotePlugin {
       logger.debug("SP starts at: 0x" + Integer.toHexString(stack));
       logger.debug("Heap starts at: 0x" + Integer.toHexString(heap));
       logger.debug("Available stack: " + (stack-heap) + " bytes");
+      memLabel.setText(String.format("Stack 0x%x, heap 0x%x", stack, heap));
+      
       if (stack < 0 || heap < 0) {
         return false;
       }
@@ -140,9 +176,20 @@ public class MspStackWatcher extends VisPlugin implements MotePlugin {
       /*final int stackStartAddress = stack;*/
       final int heapStartAddress = heap;
       registerMonitor = new RegisterMonitor.Adapter() {
+    	int min = Integer.MAX_VALUE;
         public void notifyWriteBefore(int register, final int sp, AccessMode mode) {
           /*logger.debug("SP is now: 0x" + Integer.toHexString(sp));*/
           final int available = sp - heapStartAddress;
+
+          if (available < min) {
+        	  min = available;
+              String details = mspMote.getExecutionDetails();
+              if (details != null) {
+            	  logger.info(String.format(mspMote + ": Maximum stack usage: 0x%x, available stack 0x%x", sp, available));
+            	  logger.info(details);
+              }
+          }
+          
           if (available <= 0) {
             SwingUtilities.invokeLater(new Runnable() {
               public void run() {
@@ -169,6 +216,7 @@ public class MspStackWatcher extends VisPlugin implements MotePlugin {
   }
 
   private void deactivate() {
+	  userOverriddenStack = null;
     if (registerMonitor != null) {
       cpu.removeRegisterWriteMonitor(MSP430.SP, registerMonitor);
       registerMonitor = null;
@@ -178,6 +226,12 @@ public class MspStackWatcher extends VisPlugin implements MotePlugin {
   public Collection<Element> getConfigXML() {
     ArrayList<Element> config = new ArrayList<Element>();
     Element element;
+
+    if (userOverriddenStack != null) {
+        element = new Element("stack");
+        element.setText("0x" + Integer.toHexString(userOverriddenStack));
+        config.add(element);
+    }
 
     element = new Element("monitoring");
     element.setText("" + toggleButton.isSelected());
@@ -189,14 +243,16 @@ public class MspStackWatcher extends VisPlugin implements MotePlugin {
   public boolean setConfigXML(Collection<Element> configXML,
       boolean visAvailable) {
     for (Element element : configXML) {
-      if (element.getName().equals("monitoring")) {
-        boolean monitor = Boolean.parseBoolean(element.getText());
-        if (monitor) {
-          if (activate()) {
-            toggleButton.setSelected(true);
-          }
+        if (element.getName().equals("monitoring")) {
+            boolean monitor = Boolean.parseBoolean(element.getText());
+            if (monitor) {
+              if (activate(false)) {
+                toggleButton.setSelected(true);
+              }
+            }
+        } else if (element.getName().equals("stack")) {
+        	userOverriddenStack = Integer.decode(element.getText()); 
         }
-      }
     }
     return true;
   }

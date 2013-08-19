@@ -35,7 +35,7 @@
  *   \author
  *      Marcus Lunden <marcus@thingsquare.com>>
  *   \desc
- *      Contiki main file for mist-spirit1 platform 
+ *      Contiki main file for mist-spirit1 platform
  *      (STM32L152VB @ STEVAL-IKR001V4 + Spirit1)
  */
 
@@ -67,7 +67,7 @@
 #include "SPIRIT_Config.h"
 #include "SPIRIT_Management.h"
 #include "spirit1.h"
-#include "spirit1-arch.h" 
+#include "spirit1-arch.h"
 #include "usb_init.h"
 
 #include "node-id.h"
@@ -106,9 +106,7 @@ panic_main(void)
 {
   volatile uint16_t k;
   while(1) {
-    SdkEvalLedOff(LED2);
-    for(k = 0; k < 0xffff/8; k += 1) { }
-    SdkEvalLedOn(LED2);
+    leds_toggle(LEDS_ALL);
     for(k = 0; k < 0xffff/8; k += 1) { }
   }
 }
@@ -129,26 +127,15 @@ main(int argc, char *argv[])
   sleep, standby and stop mode */
   DBGMCU_Config(DBGMCU_SLEEP | DBGMCU_STANDBY | DBGMCU_STOP, ENABLE);
 
-  /* init LEDs, move to leds-arch */
-  SdkEvalLedInit(LED1);
-  SdkEvalLedInit(LED2);
-  SdkEvalLedInit(LED3);
-  SdkEvalLedInit(LED4);
-  SdkEvalLedInit(LED5);
-  SdkEvalLedOff(LED1);
-  SdkEvalLedOff(LED2);
-  SdkEvalLedOff(LED3);
-  SdkEvalLedOff(LED4);
-  SdkEvalLedOff(LED5);
+  /* init LEDs */
+  leds_init();
 
   /* Regulate power supply voltage for RF etc */
-  SdkEvalLedOn(LED1);
-  SdkEvalPmRfSwitchInit(); 
+  SdkEvalPmRfSwitchInit();
   SdkEvalPmADCInit();
   SdkEvalPmI2CInit();
   SdkEvalPmRegulateVRfI(3.3);
-  SdkEvalPmRfSwitchToVRf();  
-  SdkEvalLedOff(LED1);
+  SdkEvalPmRfSwitchToVRf();
   /*  TODO, check that the proper voltage range is set. Minimum:
       32 MHz    range 1
       16 MHz    range 2
@@ -156,20 +143,28 @@ main(int argc, char *argv[])
 
   NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
 
+
   /* USB virtual com-port setup */
-  SdkEvalLedOn(LED1);
+#if WITH_USB_PRINTF
+  leds_on(LEDS_RED);
   SdkEvalVCInit();
   while(bDeviceState != CONFIGURED);
-  SdkEvalLedOff(LED1);
+  leds_off(LEDS_RED);
+#endif /* WITH_USB_PRINTF */
 
-  /* Initialize Contiki and our processes. */  
+  /* Initialize Contiki and our processes. */
   clock_init();
   ctimer_init();
   rtimer_init();
   watchdog_init();
-  leds_init();
   process_init();
   process_start(&etimer_process, NULL);
+
+#define WITH_STACK_MONITOR 1
+#if WITH_STACK_MONITOR
+  stack_avail_init(); /* Activate stack monitor */
+  /*stack_avail_estimate_unused()*/
+#endif /* WITH_STACK_MONITOR */
 
 #if 0
 #if WITH_SERIAL_LINE_INPUT
@@ -202,6 +197,7 @@ main(int argc, char *argv[])
       volatile clock_time_t endwait = clock_time() + CLOCK_SECOND;
       while(clock_time() < endwait);
       watchdog_periodic();
+      leds_toggle(LEDS_ALL);
       printf("Delayed startup. Starting in %d seconds...\n", secs);
     }
   }
@@ -263,7 +259,7 @@ main(int argc, char *argv[])
   if(1) {
     uip_ipaddr_t ipaddr;
     int i;
-    uip_ip6addr(&ipaddr, 0xaaaa, 0, 0, 0, 0, 0, 0, 0);
+    uip_ip6addr(&ipaddr, 0xfc00, 0, 0, 0, 0, 0, 0, 0);
     uip_ds6_set_addr_iid(&ipaddr, &uip_lladdr);
     uip_ds6_addr_add(&ipaddr, 0, ADDR_TENTATIVE);
     printf("Tentative global IPv6 address ");
@@ -343,14 +339,14 @@ main(int argc, char *argv[])
 
     /* sleep */
     ENERGEST_OFF(ENERGEST_TYPE_CPU);
-    watchdog_stop();    
+    watchdog_stop();
     ENERGEST_ON(ENERGEST_TYPE_LPM);
     //halSleepWithOptions(SLEEPMODE_IDLE,0);
 
     /* woke up */
     watchdog_start();
     ENERGEST_OFF(ENERGEST_TYPE_LPM);
-    ENERGEST_ON(ENERGEST_TYPE_CPU);  
+    ENERGEST_ON(ENERGEST_TYPE_CPU);
   }
 }
 /*---------------------------------------------------------------------------*/
@@ -444,19 +440,22 @@ static uint8_t errcode = 0;
 
 void Default_Handler();
 /*---------------------------------------------------------------------------*/
+#define ERROR_HANDLER_WATCHDOG_REBOOT() watchdog_reboot()
 void
 halBaseBandIsr()
 {
   errcode = 1;
   SdkEvalLedOn(LED5);
+  ERROR_HANDLER_WATCHDOG_REBOOT();
   while(1) {;}
 }
 /*---------------------------------------------------------------------------*/
 void
 BusFault_Handler()
 {
-  errcode = 2; 
+  errcode = 2;
   SdkEvalLedOn(LED5);
+  ERROR_HANDLER_WATCHDOG_REBOOT();
   while(1) {;}
 }
 /*---------------------------------------------------------------------------*/
@@ -465,6 +464,7 @@ halDebugIsr()
 {
   errcode = 3;
   SdkEvalLedOn(LED5);
+  ERROR_HANDLER_WATCHDOG_REBOOT();
   while(1) {;}
 }
 /*---------------------------------------------------------------------------*/
@@ -473,39 +473,44 @@ DebugMon_Handler()
 {
   errcode = 4;
   SdkEvalLedOn(LED5);
+  ERROR_HANDLER_WATCHDOG_REBOOT();
   while(1) {;}
 }
 /*---------------------------------------------------------------------------*/
 void
 HardFault_Handler()
 {
-  errcode = 5; 
+  errcode = 5;
   SdkEvalLedOn(LED5);
+  ERROR_HANDLER_WATCHDOG_REBOOT();
   while(1) {;}
 }
 /*---------------------------------------------------------------------------*/
 void
 MemManage_Handler()
 {
-  errcode = 6; 
+  errcode = 6;
   SdkEvalLedOn(LED5);
+  ERROR_HANDLER_WATCHDOG_REBOOT();
   while(1) {;}
 }
 /*---------------------------------------------------------------------------*/
 void
 UsageFault_Handler()
 {
-  errcode = 7; 
+  errcode = 7;
   SdkEvalLedOn(LED5);
+  ERROR_HANDLER_WATCHDOG_REBOOT();
   while(1) {;}
 }
 /*---------------------------------------------------------------------------*/
 void
 Default_Handler()
-{ 
-  errcode = 8; 
+{
+  errcode = 8;
   SdkEvalLedOn(LED5);
-  
+  ERROR_HANDLER_WATCHDOG_REBOOT();
+
   /* flip around a pin that can be seen on a logic analyzer for example */
   {
     GPIO_InitTypeDef GPIO_InitStructure;
@@ -518,7 +523,7 @@ Default_Handler()
     RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOC, ENABLE);
     GPIO_Init(GPIOC, &GPIO_InitStructure);
   }
-  
+
   while (1)
   {
     GPIOC->BSRRH = 1<<7;  // go high
@@ -526,3 +531,78 @@ Default_Handler()
   }
 }
 /*---------------------------------------------------------------------------*/
+#if GCC
+int
+_write(int file, const char *ptr, int len)
+{
+  return 0;
+}
+int
+_lseek(int file, int ptr, int dir)
+{
+  return 0;
+}
+int
+_read(int file, char *ptr, int len)
+{
+  return 0;
+}
+int
+_sbrk(int incr)
+{
+  return NULL;
+}
+int
+_close(int file)
+{
+  return -1;
+}
+int
+_isatty(int fd)
+{
+  return 1;
+}
+int
+_fstat(int file, void *st)
+{
+  return 0;
+}
+#endif /* GCC */
+/*---------------------------------------------------------------------------*/
+#define PUTS_ON_ENC 0
+#if PUTS_ON_ENC
+int
+puts(const char* str)
+{
+  enc28j60_send(str, strlen(str));
+  return 0;
+}
+#endif PUTS_ON_ENC
+#define PRINTF_ON_ENC 0
+#include <stdarg.h>
+#if PRINTF_ON_ENC
+static int enc_inited = 0;
+void
+enc_printf(char *format, ...)
+{
+  char buf[200];
+  int len;
+  va_list args;
+
+  if(!enc_inited) {
+    /* XXX Make sure enc is not needed by any other part of the system, and if so, disable below initialization */
+    enc_inited = 1;
+    enc28j60_init("dummymac");
+  }
+
+  va_start(args, format);
+  len = vsnprintf(buf, sizeof(buf), format, args);
+  va_end(args);
+
+  if(len > sizeof(buf)) {
+    return;
+  }
+
+  enc28j60_send(buf, strlen(buf));
+}
+#endif PUTS_ON_ENC

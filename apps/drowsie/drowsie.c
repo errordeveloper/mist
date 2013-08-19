@@ -83,6 +83,7 @@
 #include "sys/compower.h"
 #include "sys/pt.h"
 #include "sys/rtimer.h"
+#include "net/rime/rimestats.h"
 
 
 #include <string.h>
@@ -348,6 +349,11 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
                packetbuf_addr(PACKETBUF_ADDR_RECEIVER)->u8[1]);
 #endif /* UIP_CONF_IPV6 */
   }
+
+  if(!is_broadcast) {
+    RIMESTATS_ADD(reliabletx);
+  }
+
   packetbuf_set_attr(PACKETBUF_ATTR_MAC_ACK, 1);
 
   /* Create the MAC header for the data packet. */
@@ -508,6 +514,7 @@ send_packet(mac_callback_t mac_callback, void *mac_callback_ptr,
         if(len == ACK_LEN && seqno == ackbuf[ACK_LEN - 1]) {
           got_strobe_ack = 1;
           encounter_time = txtime;
+          RIMESTATS_ADD(ackrx);
           break;
         } else {
           PRINTF("drowsie: collisions while sending\n");

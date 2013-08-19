@@ -37,6 +37,8 @@
 #include "aes-ccm.h"
 #include "aes.h"
 
+#include "dev/watchdog.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -157,6 +159,7 @@ ctr_next_ctr_block(const unsigned char *key, const unsigned char *nonce,
 
 #if PRINT_CTR_BLOCKS
   CTR_PRINTF("A_%d: ", counter);
+  int i;
   for(i = 0; i < BLOCK_SIZE; i++) {
     CTR_PRINTF("%02x", outbuf[i]);
   }
@@ -216,21 +219,35 @@ cbcmac_calc(const unsigned char *key, const unsigned char *nonce,
   /* B_1..n: auth. blocks */
   if(adata_len > 0) {
     unsigned long left, idx;
+    int len;
 
-    /* 2 bytes data length in first auth. block */
     CBCMAC_PRINTF("CBC-MAC: Have auth. data\n");
     memset(BUF, 0, sizeof(BUF));
-    tmp2 = (uint16_t) adata_len; /* XXX Max size supported is 0xFFFF */
-    tmp = UIP_HTONS(tmp2);
-    memcpy(&BUF[0], &tmp, 2);
+    if(adata_len < 65536) {
+      /* 2 bytes data length in first auth. block */
+      tmp2 = (uint16_t) adata_len;
+      tmp = UIP_HTONS(tmp2);
+      memcpy(&BUF[0], &tmp, 2);
+      len = 2;
+    } else {
+      uint8_t sizefield[6];
+      sizefield[0] = 0xff;
+      sizefield[1] = 0xfe;
+      sizefield[2] = (adata_len >> 24) & 0xff;
+      sizefield[3] = (adata_len >> 16) & 0xff;
+      sizefield[4] = (adata_len >> 8) & 0xff;
+      sizefield[5] = (adata_len) & 0xff;
+      memcpy(&BUF[0], &sizefield, sizeof(sizefield));
+      len = sizeof(sizefield);
+    }
 
-    /* 14 bytes data in first auth. block */
+    /* 16 - len bytes data in first auth. block */
     left = adata_len;
     idx = 0;
-    memcpy(&BUF[2], &adata[idx],
-           (left > (BLOCK_SIZE - 2) ? (BLOCK_SIZE - 2) : left));
-    idx += (left > (BLOCK_SIZE - 2) ? (BLOCK_SIZE - 2) : left);
-    left -= (left > (BLOCK_SIZE - 2) ? (BLOCK_SIZE - 2) : left);
+    memcpy(&BUF[len], &adata[idx],
+           (left > (BLOCK_SIZE - len) ? (BLOCK_SIZE - len) : left));
+    idx += (left > (BLOCK_SIZE - len) ? (BLOCK_SIZE - len) : left);
+    left -= (left > (BLOCK_SIZE - len) ? (BLOCK_SIZE - len) : left);
 
     /* 16 bytes data in subsequent auth. blocks */
     while(left > 0) {
@@ -242,6 +259,7 @@ cbcmac_calc(const unsigned char *key, const unsigned char *nonce,
       memcpy(&BUF[0], &adata[idx], (left > BLOCK_SIZE ? BLOCK_SIZE : left));
       idx += (left > BLOCK_SIZE ? BLOCK_SIZE : left);
       left -= (left > BLOCK_SIZE ? BLOCK_SIZE : left);
+
     }
 
     CBCMAC_PRINTF("CBC-MAC: Auth. block prepared (last)\n");
@@ -258,7 +276,6 @@ cbcmac_calc(const unsigned char *key, const unsigned char *nonce,
     left = payload_len;
     idx = 0;
     while(left > 0) {
-      int i;
 
       /* Auth data + padding with zeroes */
       memset(BUF, 0, sizeof(BUF));
@@ -317,27 +334,42 @@ cbcmac_verify(const unsigned char *key, const unsigned char *nonce,
   /* B_1..n: auth. blocks */
   if(adata_len > 0) {
     unsigned long left, idx;
+    int len;
 
-    /* 2 bytes data length in first auth. block */
     CBCMAC_PRINTF("CBC-MAC: Have auth. data\n");
     memset(BUF, 0, sizeof(BUF));
-    tmp2 = (uint16_t) adata_len; /* XXX Max size supported is 0xFFFF */
-    tmp = UIP_HTONS(tmp2);
-    memcpy(&BUF[0], &tmp, 2);
+    if(adata_len < 65536) {
+      /* 2 bytes data length in first auth. block */
+      tmp2 = (uint16_t) adata_len;
+      tmp = UIP_HTONS(tmp2);
+      memcpy(&BUF[0], &tmp, 2);
+      len = 2;
+    } else {
+      uint8_t sizefield[6];
+      sizefield[0] = 0xff;
+      sizefield[1] = 0xfe;
+      sizefield[2] = (adata_len >> 24) & 0xff;
+      sizefield[3] = (adata_len >> 16) & 0xff;
+      sizefield[4] = (adata_len >> 8) & 0xff;
+      sizefield[5] = (adata_len) & 0xff;
+      memcpy(&BUF[0], &sizefield, sizeof(sizefield));
+      len = sizeof(sizefield);
+    }
 
-    /* 14 bytes data in first auth. block */
+    /* 16 - len bytes data in first auth. block */
     left = adata_len;
     idx = 0;
-    memcpy(&BUF[2], &adata[idx],
-           (left > (BLOCK_SIZE - 2) ? (BLOCK_SIZE - 2) : left));
-    idx += (left > (BLOCK_SIZE - 2) ? (BLOCK_SIZE - 2) : left);
-    left -= (left > (BLOCK_SIZE - 2) ? (BLOCK_SIZE - 2) : left);
+    memcpy(&BUF[len], &adata[idx],
+           (left > (BLOCK_SIZE - len) ? (BLOCK_SIZE - len) : left));
+    idx += (left > (BLOCK_SIZE - len) ? (BLOCK_SIZE - len) : left);
+    left -= (left > (BLOCK_SIZE - len) ? (BLOCK_SIZE - len) : left);
 
     /* 16 bytes data in subsequent auth. blocks */
     while(left > 0) {
       CBCMAC_PRINTF("CBC-MAC: Auth. block prepared\n");
       cbcmac_append(key, BUF);
 
+      watchdog_periodic();
       /* Auth data + padding with zeroes */
       memset(BUF, 0, sizeof(BUF));
       memcpy(&BUF[0], &adata[idx], (left > BLOCK_SIZE ? BLOCK_SIZE : left));

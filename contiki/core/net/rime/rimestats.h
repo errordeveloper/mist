@@ -53,13 +53,24 @@ struct rimestats {
     sendingdrop; /* Packet dropped when we were sending a packet */
 
   unsigned long lltx, llrx;
+
+  unsigned long queuebuf_outofbuf; /* Queuebuf allocation failed: out of buffers */
+  unsigned long sicslowpandrops; /* Incoming packet was dropped in sicslowpan.c */
+
+  unsigned long decryptiondrops; /* Incoming packet was dropped
+                                    because it could not be correctly
+                                    decrypted. */
 };
 
 #if RIMESTATS_CONF_ENABLED
+/* Don't access this variable directly, use RIMESTATS_ADD and RIMESTATS_GET */
 extern struct rimestats rimestats;
+
 #define RIMESTATS_ADD(x) rimestats.x++
+#define RIMESTATS_GET(x) rimestats.x
 #else /* RIMESTATS_CONF_ENABLED */
 #define RIMESTATS_ADD(x)
+#define RIMESTATS_GET(x) 0
 #endif /* RIMESTATS_CONF_ENABLED */
 
 #endif /* __RIMESTATS_H__ */

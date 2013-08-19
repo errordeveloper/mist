@@ -82,6 +82,10 @@ int cc2520_authority_level_of_sender;
 
 int cc2520_packets_seen, cc2520_packets_read;
 
+static uint8_t getreg(uint16_t regname);
+static void setreg(uint16_t regname, uint8_t value);
+static void clear_exceptions(void);
+
 #define BUSYWAIT_UNTIL(cond, max_time)                                  \
   do {                                                                  \
     rtimer_clock_t t0;                                                  \
@@ -156,6 +160,7 @@ flushrx(void)
   CC2520_READ_FIFO_BYTE(dummy);
   CC2520_STROBE(CC2520_INS_SFLUSHRX);
   CC2520_STROBE(CC2520_INS_SFLUSHRX);
+  clear_exceptions();
 }
 /*---------------------------------------------------------------------------*/
 static void
@@ -170,6 +175,14 @@ status(void)
   uint8_t status;
   CC2520_GET_STATUS(status);
   return status;
+}
+/*---------------------------------------------------------------------------*/
+static void
+clear_exceptions(void)
+{
+  setreg(CC2520_EXCFLAG0, 0x0);
+  setreg(CC2520_EXCFLAG1, 0x0);
+  setreg(CC2520_EXCFLAG2, 0x0);
 }
 /*---------------------------------------------------------------------------*/
 static uint8_t locked, lock_on, lock_off;
@@ -257,17 +270,17 @@ cc2520_init(void)
   }
 
   SET_VREG_INACTIVE();
-  clock_delay(250);
+  BUSYWAIT_UNTIL(0, RTIMER_SECOND / 100);
   /* Turn on voltage regulator and reset. */
   SET_VREG_ACTIVE();
-  clock_delay(250);
+  BUSYWAIT_UNTIL(0, RTIMER_SECOND / 100);
   SET_RESET_ACTIVE();
-  clock_delay(127);
+  BUSYWAIT_UNTIL(0, RTIMER_SECOND / 100);
   SET_RESET_INACTIVE();
-  clock_delay(125);
+  BUSYWAIT_UNTIL(0, RTIMER_SECOND / 100);
   /* Turn on the crystal oscillator. */
   strobe(CC2520_INS_SXOSCON);
-  clock_delay(125);
+  BUSYWAIT_UNTIL(0, RTIMER_SECOND / 100);
 
   BUSYWAIT_UNTIL(status() & (BV(CC2520_XOSC16M_STABLE)), RTIMER_SECOND / 100);
 
@@ -329,6 +342,11 @@ cc2520_init(void)
   cc2520_set_pan_addr(0xffff, 0x0000, NULL);
   cc2520_set_channel(26);
 
+#if CC2520_CONF_GPIO0_AS_FIFOP
+  setreg(CC2520_GPIOPOLARITY, (1<<0));
+  setreg(CC2520_GPIOCTRL0, 0x28);
+#endif /* CC2520_CONF_GPIO0_AS_FIFOP */
+
   flushrx();
 
   process_start(&cc2520_process, NULL);
@@ -371,7 +389,13 @@ cc2520_transmit(unsigned short payload_len)
   strobe(CC2520_INS_STXON);
 #endif /* WITH_SEND_CCA */
   for(i = LOOP_20_SYMBOLS; i > 0; i--) {
+
+#ifndef CC2520_SFD_PIN
+#warning CC2520_SFD_PIN/CC2520_SFD_PORT/CC2520_SFD_IS_1 not defined in platform-conf.h
+    if(1) {
+#else
     if(CC2520_SFD_IS_1) {
+#endif
       {
         rtimer_clock_t sfd_timestamp;
         sfd_timestamp = cc2520_sfd_start_time;
@@ -602,6 +626,10 @@ int
 cc2520_interrupt(void)
 {
   CC2520_CLEAR_FIFOP_INT();
+  if(!CC2520_FIFOP_IS_1) {
+    return 0;
+  }
+
   process_poll(&cc2520_process);
 #if CC2520_TIMETABLE_PROFILING
   timetable_clear(&cc2520_timetable);
@@ -651,19 +679,36 @@ cc2520_read(void *buf, unsigned short bufsize)
 {
   uint8_t footer[2];
   uint8_t len;
+  uint8_t rxfifo_cnt;
+
+  GET_LOCK();
 
   if(!CC2520_FIFOP_IS_1) {
+    flushrx();
+    RELEASE_LOCK();
     return 0;
   }
 
-  GET_LOCK();
+  rxfifo_cnt = getreg(CC2520_RXFIFOCNT);
+  if(rxfifo_cnt <= FOOTER_LEN || rxfifo_cnt > 128) {
+    flushrx();
+    RIMESTATS_ADD(tooshort);
+    RELEASE_LOCK();
+    return 0;
+  }
 
   cc2520_packets_read++;
 
   getrxbyte(&len);
+  rxfifo_cnt--;
+  if(rxfifo_cnt < len) {
+    flushrx();
+    RIMESTATS_ADD(badsynch);
+    RELEASE_LOCK();
+    return 0;
+  }
 
   if(len > CC2520_MAX_PACKET_LEN) {
-    /* Oops, we must be out of sync. */
     flushrx();
     RIMESTATS_ADD(badsynch);
     RELEASE_LOCK();
@@ -832,7 +877,12 @@ cc2520_cca(void)
 int
 cc2520_receiving_packet(void)
 {
+#ifndef CC2520_SFD_PIN
+#warning CC2520_SFD_PIN/CC2520_SFD_PORT/CC2520_SFD_IS_1 not defined in platform-conf.h
+  return 0;
+#else
   return CC2520_SFD_IS_1;
+#endif
 }
 /*---------------------------------------------------------------------------*/
 static int

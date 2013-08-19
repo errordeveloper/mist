@@ -38,8 +38,6 @@
 
 #include <string.h>
 
-#define MAX_AGE (CLOCK_SECOND * 60 * 5)
-
 #ifdef IP64_ADDRMAP_CONF_ENTRIES
 #define NUM_ENTRIES IP64_ADDRMAP_CONF_ENTRIES
 #else /* IP64_ADDRMAP_CONF_ENTRIES */
@@ -89,6 +87,42 @@ check_age(void)
   }
 }
 /*---------------------------------------------------------------------------*/
+static int
+recycle(void)
+{
+  /* Find the oldest recyclable mapping and remove it. */
+  struct ip64_addrmap_entry *m, *oldest;
+
+  /* Walk through the list of address mappings, throw away the ones
+     that are too old. */
+
+  oldest = NULL;
+  for(m = list_head(entrylist);
+      m != NULL;
+      m = list_item_next(m)) {
+    if(m->flags & FLAGS_RECYCLABLE) {
+      if(oldest == NULL) {
+        oldest = m;
+      } else {
+        if(timer_remaining(&m->timer) <
+           timer_remaining(&oldest->timer)) {
+          oldest = m;
+        }
+      }
+    }
+  }
+
+  /* If we found an oldest recyclable entry, remove it and return
+     non-zero. */
+  if(oldest != NULL) {
+    list_remove(entrylist, oldest);
+    memb_free(&entrymemb, oldest);
+    return 1;
+  }
+
+  return 0;
+}
+/*---------------------------------------------------------------------------*/
 struct ip64_addrmap_entry *
 ip64_addrmap_lookup(const uip_ip6addr_t *ip6addr,
 		    uint16_t ip6port,
@@ -113,7 +147,6 @@ ip64_addrmap_lookup(const uip_ip6addr_t *ip6addr,
        m->ip6port == ip6port &&
        uip_ip4addr_cmp(&m->ip4addr, ip4addr) &&
        uip_ip6addr_cmp(&m->ip6addr, ip6addr)) {
-      timer_set(&m->timer, MAX_AGE);
       return m;
     }
   }
@@ -132,7 +165,6 @@ ip64_addrmap_lookup_port(uint16_t mapped_port, uint8_t protocol)
 	   m->protocol, protocol);
     if(m->mapped_port == mapped_port &&
        m->protocol == protocol) {
-      timer_set(&m->timer, MAX_AGE);
       return m;
     }
   }
@@ -159,14 +191,21 @@ ip64_addrmap_create(const uip_ip6addr_t *ip6addr,
 
   check_age();
   m = memb_alloc(&entrymemb);
+  if(m == NULL) {
+    /* We could not allocate an entry, try to recycle one and try to
+       allocate again. */
+    if(recycle()) {
+      m = memb_alloc(&entrymemb);
+    }
+  }
   if(m != NULL) {
     uip_ip4addr_copy(&m->ip4addr, ip4addr);
     m->ip4port = ip4port;
     uip_ip6addr_copy(&m->ip6addr, ip6addr);
     m->ip6port = ip6port;
     m->protocol = protocol;
-    timer_set(&m->timer, MAX_AGE);
-
+    m->flags = FLAGS_NONE;
+    timer_set(&m->timer, 0);
 
     /* Pick a new, unused local port. First make sure that the
        mapped_port number does not belong to any active connection. If
@@ -190,5 +229,22 @@ ip64_addrmap_create(const uip_ip6addr_t *ip6addr,
     return m;
   }
   return NULL;
+}
+/*---------------------------------------------------------------------------*/
+void
+ip64_addrmap_set_lifetime(struct ip64_addrmap_entry *e,
+                          clock_time_t time)
+{
+  if(e != NULL) {
+    timer_set(&e->timer, time);
+  }
+}
+/*---------------------------------------------------------------------------*/
+void
+ip64_addrmap_set_recycleble(struct ip64_addrmap_entry *e)
+{
+  if(e != NULL) {
+    e->flags |= FLAGS_RECYCLABLE;
+  }
 }
 /*---------------------------------------------------------------------------*/

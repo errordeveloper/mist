@@ -50,6 +50,9 @@ int select_set_callback(int fd, const struct select_callback *callback);
 #define CC_CONF_VA_ARGS                1
 /*#define CC_CONF_INLINE                 inline*/
 
+#ifndef EEPROM_CONF_SIZE
+#define EEPROM_CONF_SIZE				1024
+#endif
 
 #define CCIF
 #define CLIF
@@ -122,14 +125,13 @@ typedef unsigned short uip_stats_t;
 #define UIP_CONF_IPV6_REASSEMBLY 0
 #define UIP_CONF_NETIF_MAX_ADDRESSES  3
 #define UIP_CONF_ND6_MAX_PREFIXES     3
-#define UIP_CONF_ND6_MAX_NEIGHBORS    4
 #define UIP_CONF_ND6_MAX_DEFROUTERS   2
 #define UIP_CONF_ICMP6           1
 
 /* configure number of neighbors and routes */
-#ifndef UIP_CONF_DS6_NBR_NBU
-#define UIP_CONF_DS6_NBR_NBU     30
-#endif /* UIP_CONF_DS6_NBR_NBU */
+#ifndef NBR_TABLE_CONF_MAX_NEIGHBORS
+#define NBR_TABLE_CONF_MAX_NEIGHBORS     30
+#endif /* NBR_TABLE_CONF_MAX_NEIGHBORS */
 #ifndef UIP_CONF_MAX_ROUTES
 #define UIP_CONF_MAX_ROUTES   30
 #endif /* UIP_CONF_MAX_ROUTES */
@@ -165,11 +167,40 @@ typedef unsigned short uip_stats_t;
 
 #endif /* UIP_CONF_IPV6 */
 
+#include "native-ctk-conf.h"
+
 typedef unsigned long clock_time_t;
 
 #define CLOCK_CONF_SECOND 1000
 
 #define LOG_CONF_ENABLED 1
+
+#define PROGRAM_HANDLER_CONF_MAX_NUMDSCS 10
+#define PROGRAM_HANDLER_CONF_QUIT_MENU   1
+
+#define EMAIL_CONF_WIDTH  78
+#define EMAIL_CONF_HEIGHT 17
+#ifndef PLATFORM_BUILD
+#define EMAIL_CONF_ERASE   0
+#endif
+
+#define IRC_CONF_WIDTH         78
+#define IRC_CONF_HEIGHT        17
+#define IRC_CONF_SYSTEM_STRING "*nix"
+
+#define SHELL_CONF_WITH_PROGRAM_HANDLER 1
+
+#define SHELL_GUI_CONF_XSIZE 78
+#define SHELL_GUI_CONF_YSIZE 17
+
+#ifdef PLATFORM_BUILD
+#define TELNETD_CONF_GUI 1
+#endif /* PLATFORM_BUILD */
+
+#ifdef PLATFORM_BUILD
+#define WWW_CONF_WEBPAGE_WIDTH  78
+#define WWW_CONF_WEBPAGE_HEIGHT 17
+#endif /* PLATFORM_BUILD */
 
 /* Not part of C99 but actually present */
 int strcasecmp(const char*, const char*);

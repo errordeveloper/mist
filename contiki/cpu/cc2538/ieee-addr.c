@@ -40,24 +40,35 @@
 #include "ieee-addr.h"
 
 #include <stdint.h>
-#include <stdio.h>
-/*---------------------------------------------------------------------------*/
-#if IEEE_CONF_ADDR_LOCATION==IEEE_ADDR_USE_HARDCODED
-#define IEEE_ADDR (ieee_addr_hc)
-#elif IEEE_CONF_ADDR_LOCATION==IEEE_ADDR_USE_SECONDARY
-#define IEEE_ADDR ((uint8_t *)IEEE_ADDR_LOCATION_SECONDARY)
-#else
-#define IEEE_ADDR ((uint8_t *)IEEE_ADDR_LOCATION_PRIMARY)
-#endif
 /*---------------------------------------------------------------------------*/
 void
 ieee_addr_cpy_to(uint8_t *dst, uint8_t len)
 {
-#if IEEE_CONF_ADDR_LOCATION==IEEE_ADDR_USE_HARDCODED
-  uint8_t ieee_addr_hc[8] = { 0x00, 0x12, 0x4B, 0x00, 0x89, 0xAB, 0xCD, 0xEF };
-#endif
+  if(IEEE_ADDR_CONF_HARDCODED) {
+    uint8_t ieee_addr_hc[8] = IEEE_ADDR_CONF_ADDRESS;
+    memcpy(dst, &ieee_addr_hc[8 - len], len);
+  } else if(IEEE_ADDR_CONF_IN_FLASH) {
+    memcpy(dst, (char *)IEEE_ADDR_LOCATION_FLASH, len);
+  } else {
+    /* Reading from Info Page, we need to invert byte order */
+    int i;
+    for(i = 0; i < len; i++) {
+      dst[i] = ((uint8_t *)IEEE_ADDR_LOCATION_PRIMARY)[len - 1 - i];
+    }
 
-  memcpy(dst, &IEEE_ADDR[8 - len], len);
+    /* This is ugly: some chips seem to have a bug in which the MAC
+       address is stored backwards. We check if the TI OUI is in the
+       wrong position and flip the address if so. */
+    if(dst[4] == 0x00 && dst[5] == 0x12 &&
+       dst[6] == 0x4b) {
+      for(i = 0; i < len / 2; i++) {
+        dst[i] = ((uint8_t *)IEEE_ADDR_LOCATION_PRIMARY)[len / 2 - 1 - i];
+      }
+      for(i = 0; i < len / 2; i++) {
+        dst[i + len / 2] = ((uint8_t *)IEEE_ADDR_LOCATION_PRIMARY)[len - 1 - i];
+      }
+    }
+  }
 
 #if IEEE_ADDR_NODE_ID
   dst[len - 1] = IEEE_ADDR_NODE_ID & 0xFF;

@@ -436,12 +436,14 @@ set_broadcast_flag(struct queue_list_item *i, uint8_t flag)
 }
 #endif /* WITH_PENDING_BROADCAST */
 /*---------------------------------------------------------------------------*/
+#if WITH_ANNOUNCEMENTS
 static void
 listen_callback(int periods)
 {
   is_listening = periods;
   turn_radio_on();
 }
+#endif /* WITH_ANNOUNCEMENTS */
 /*---------------------------------------------------------------------------*/
 /**
  * Send a probe packet.
@@ -451,7 +453,9 @@ send_probe(void)
 {
   struct lpp_hdr *hdr;
   struct announcement_msg *adata;
+#if WITH_ANNOUNCEMENTS
   struct announcement *a;
+#endif /* WITH_ANNOUNCEMENTS */
 
   /* Set up the probe header. */
   packetbuf_clear();

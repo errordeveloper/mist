@@ -384,6 +384,7 @@ public class ELF {
   public MapTable getMap() {
     MapTable map = new MapTable();
     int sAddrHighest = -1;
+    boolean foundEnd = false;
 
     ELFSection name = sections[symTable.link];
     int len = symTable.size;
@@ -428,13 +429,14 @@ public class ELF {
       if (sAddr > 0 && sAddr < 0x100000) {
 	String symbolName = sn;
 	
-	if (sAddr < 0x5c00 && sAddr > sAddrHighest) {
+	if (sAddr < 0x5c00 && sAddr > sAddrHighest && !sn.equals("__stack")) {
 	  sAddrHighest = sAddr;
 	}
 //	if (bind == ELFSection.SYMBIND_LOCAL) {
 //	  symbolName += " (" + currentFile + ')';
 //	}
 	if ("_end".equals(symbolName)) {
+      foundEnd = true;
 	  map.setHeapStart(sAddr);
 	} else if ("__stack".equals(symbolName)){
 	  map.setStackStart(sAddr);
@@ -465,7 +467,7 @@ public class ELF {
       addr += symTable.getEntrySize();
     }
 
-  if (sAddrHighest > 0) {
+  if (!foundEnd && sAddrHighest > 0) {
     System.out.printf("Warning: Unable to parse _end symbol. I'm guessing that heap starts at 0x%05x\n", sAddrHighest);
     map.setHeapStart(sAddrHighest);
   }

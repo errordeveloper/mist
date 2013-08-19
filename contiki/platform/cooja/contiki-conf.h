@@ -36,8 +36,14 @@
 #define PROFILE_CONF_ON 0
 #define ENERGEST_CONF_ON 0
 #define LOG_CONF_ENABLED 1
+#define RIMESTATS_CONF_ON 1
+#define RIMESTATS_CONF_ENABLED 1
 
 #define COOJA 1
+
+#ifndef EEPROM_CONF_SIZE
+#define EEPROM_CONF_SIZE				1024
+#endif
 
 #define w_memcpy memcpy
 
@@ -59,10 +65,10 @@
 /* Default network config */
 #if WITH_UIP6
 
-#define NULLRDC_CONF_802154_AUTOACK  0
-#define NULLRDC_CONF_SEND_802154_ACK 0
+#define NULLRDC_CONF_802154_AUTOACK  1
+#define NULLRDC_CONF_SEND_802154_ACK 1
 #define NULLRDC_CONF_ACK_WAIT_TIME                RTIMER_SECOND / 500
-#define NULLRDC_CONF_AFTER_ACK_DETECTED_WAIT_TIME RTIMER_SECOND / 250
+#define NULLRDC_CONF_AFTER_ACK_DETECTED_WAIT_TIME 0
 
 
 /* Network setup for IPv6 */
@@ -123,19 +129,14 @@
 #endif /* UIP_CONF_IPV6_RPL */
 
 /* configure number of neighbors and routes */
-#ifndef UIP_CONF_DS6_NBR_NBU
-#define UIP_CONF_DS6_NBR_NBU     300
-#endif /* UIP_CONF_DS6_NBR_NBU */
+#ifndef NBR_TABLE_CONF_MAX_NEIGHBORS
+#define NBR_TABLE_CONF_MAX_NEIGHBORS     300
+#endif /* NBR_TABLE_CONF_MAX_NEIGHBORS */
 #ifndef UIP_CONF_MAX_ROUTES
 #define UIP_CONF_MAX_ROUTES   300
 #endif /* UIP_CONF_MAX_ROUTES */
 
 #define TCPIP_CONF_ANNOTATE_TRANSMISSIONS 1
-
-#define RPL_CONF_DIO_INTERVAL_MIN 16
-
-#define RPL_DIS_INTERVAL_CONF     (5 * 60)
-#define RPL_CONF_DAO_LATENCY (CLOCK_SECOND * 60)
 
 #define UIP_CONF_ND6_SEND_RA		0
 #define UIP_CONF_ND6_REACHABLE_TIME     600000
@@ -144,7 +145,6 @@
 #define RIMEADDR_CONF_SIZE            8
 #define UIP_CONF_NETIF_MAX_ADDRESSES  3
 #define UIP_CONF_ND6_MAX_PREFIXES     3
-#define UIP_CONF_ND6_MAX_NEIGHBORS    4
 #define UIP_CONF_ND6_MAX_DEFROUTERS   2
 
 #ifndef UIP_CONF_IPV6_QUEUE_PKT
@@ -154,7 +154,6 @@
 #define UIP_CONF_IPV6_REASSEMBLY        0
 #define UIP_CONF_NETIF_MAX_ADDRESSES    3
 #define UIP_CONF_ND6_MAX_PREFIXES       3
-#define UIP_CONF_ND6_MAX_NEIGHBORS      4
 #define UIP_CONF_ND6_MAX_DEFROUTERS     2
 #define UIP_CONF_IP_FORWARD             0
 #ifndef UIP_CONF_BUFFER_SIZE
@@ -237,6 +236,9 @@ typedef unsigned long rtimer_clock_t;
 #endif /* UIP_CONF_IPV6 */
 
 #define CFS_CONF_OFFSET_TYPE	long
+
+#define MULTICHAN_CONF_SET_CHANNEL(x) radio_set_channel(x)
+#define MULTICHAN_CONF_READ_RSSI(x) 0
 
 /* include the project config */
 /* PROJECT_CONF_H might be defined in the project Makefile */

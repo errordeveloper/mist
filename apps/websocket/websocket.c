@@ -73,6 +73,9 @@ struct websocket_frame_mask {
   uint8_t mask[4];
 };
 
+#define DEBUG DEBUG_NONE
+#include "net/uip-debug.h"
+
 /*---------------------------------------------------------------------------*/
 static int
 parse_url(const char *url, char *host, uint16_t *portptr, char *path)
@@ -166,7 +169,7 @@ start_get(struct websocket *s)
       if(mdns_lookup(host) == NULL) {
 	mdns_query(host);
 	s->state = WEBSOCKET_STATE_DNS_REQUEST_SENT;
-	printf("Resolving host...\n");
+	PRINTF("Resolving host...\n");
 	return WEBSOCKET_OK;
       }
     }
@@ -175,11 +178,11 @@ start_get(struct websocket *s)
        initial GET request. */
     if(websocket_http_client_get(&(s->s), host, port, path,
                                  s->subprotocol) == 0) {
-      printf("Out of memory error\n");
+      PRINTF("Out of memory error\n");
       s->state = WEBSOCKET_STATE_CLOSED;
       return WEBSOCKET_ERR;
     } else {
-      printf("Connecting...\n");
+      PRINTF("Connecting...\n");
       s->state = WEBSOCKET_STATE_HTTP_REQUEST_SENT;
       return WEBSOCKET_OK;
     }
@@ -194,7 +197,7 @@ call(struct websocket *s, websocket_result r,
   if(s != NULL && s->callback != NULL) {
     s->callback(s, r, data, datalen);
   }
-} 
+}
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(websocket_process, ev, data)
 {
@@ -221,11 +224,11 @@ PROCESS_THREAD(websocket_process, ev, data)
 	   strcmp(name, host) == 0) {
 	  if(mdns_lookup(name) != NULL) {
 	    /* Hostname found, restart get. */
-	    printf("Restarting get\n");
+	    PRINTF("Restarting get\n");
 	    start_get(s);
 	  } else {
 	    /* Hostname not found, kill connection. */
-            /*	    printf("XXX killing connection\n");*/
+            /*	    PRINTF("XXX killing connection\n");*/
             call(s, WEBSOCKET_HOSTNAME_NOT_FOUND, NULL, 0);
 	  }
 	}
@@ -245,7 +248,7 @@ websocket_http_client_aborted(struct websocket_http_client_state *client_state)
   if(client_state != NULL) {
     struct websocket *s = (struct websocket *)
       ((char *)client_state - offsetof(struct websocket, s));
-    printf("Websocket reset\n");
+    PRINTF("Websocket reset\n");
     s->state = WEBSOCKET_STATE_CLOSED;
     call(s, WEBSOCKET_RESET, NULL, 0);
   }
@@ -259,7 +262,7 @@ websocket_http_client_timedout(struct websocket_http_client_state *client_state)
 {
   struct websocket *s = (struct websocket *)
     ((char *)client_state - offsetof(struct websocket, s));
-  printf("Websocket timed out\n");
+  PRINTF("Websocket timed out\n");
   s->state = WEBSOCKET_STATE_CLOSED;
   call(s, WEBSOCKET_TIMEDOUT, NULL, 0);
 }
@@ -273,7 +276,7 @@ websocket_http_client_closed(struct websocket_http_client_state *client_state)
 {
   struct websocket *s = (struct websocket *)
     ((char *)client_state - offsetof(struct websocket, s));
-  printf("Websocket closed.\n");
+  PRINTF("Websocket closed.\n");
   s->state = WEBSOCKET_STATE_CLOSED;
   call(s, WEBSOCKET_CLOSED, NULL, 0);
 }
@@ -287,9 +290,68 @@ websocket_http_client_connected(struct websocket_http_client_state *client_state
   struct websocket *s = (struct websocket *)
     ((char *)client_state - offsetof(struct websocket, s));
 
-  printf("Websocket connected\n");
-  s->state = WEBSOCKET_STATE_CONNECTED;
+  PRINTF("Websocket connected\n");
+  s->state = WEBSOCKET_STATE_WAITING_FOR_HEADER;
   call(s, WEBSOCKET_CONNECTED, NULL, 0);
+}
+/*---------------------------------------------------------------------------*/
+/* The websocket header may potentially be split into multiple TCP
+   segments. This function eats one byte each, puts it into
+   s->headercache, and checks whether or not the full header has been
+   received. */
+static int
+receive_header_byte(struct websocket *s, uint8_t byte)
+{
+  int len;
+  int expected_len;
+  struct websocket_frame_hdr *hdr;
+
+  /* Take the next byte of data and place it in the header cache. */
+  if(s->state == WEBSOCKET_STATE_RECEIVING_HEADER) {
+    s->headercache[s->headercacheptr] = byte;
+    s->headercacheptr++;
+    if(s->headercacheptr >= sizeof(s->headercache)) {
+      /* Something bad happened: we ad read 10 bytes and had not yet
+         found a reasonable header, so we close the socket. */
+      websocket_close(s);
+    }
+  }
+
+  len = s->headercacheptr;
+  hdr = (struct websocket_frame_hdr *)s->headercache;
+
+  /* Check the header that we have received to see if it is long
+     enough. */
+
+  /* We start with expecting a length of at least two bytes (opcode +
+     1 length byte). */
+  expected_len = 2;
+
+  if(len >= expected_len) {
+
+    /* We check how many more bytes we should expect to see. The
+       length byte determines how many length bytes are included in
+       the header. */
+    if((hdr->len & WEBSOCKET_LEN_MASK) == 126) {
+      expected_len += 2;
+    } else if((hdr->len & WEBSOCKET_LEN_MASK) == 127) {
+      expected_len += 4;
+    }
+
+    /* If the option has the mask bit set, we should expect to see 4
+       mask bytes at the end of the header. */
+    if((hdr->len & WEBSOCKET_MASK_BIT ) != 0) {
+      expected_len += 4;
+    }
+
+    /* Now we know how long our header if expected to be. If it is
+       this long, we are done and we set the state to reflect this. */
+    if(len == expected_len) {
+      s->state = WEBSOCKET_STATE_HEADER_RECEIVED;
+      return 1;
+    }
+  }
+  return 0;
 }
 /*---------------------------------------------------------------------------*/
 /* Callback function. Called from the webclient module when HTTP data
@@ -303,24 +365,42 @@ websocket_http_client_datahandler(struct websocket_http_client_state *client_sta
     ((char *)client_state - offsetof(struct websocket, s));
   struct websocket_frame_hdr *hdr;
   struct websocket_frame_mask *maskptr;
-  uint8_t *user_data;
-  int appdata_len;
-  int header_len;
 
   if(data == NULL) {
     call(s, WEBSOCKET_CLOSED, NULL, 0);
   } else {
+    /* This function is a state machine that does different things
+       depending on the state. If we are waiting for header (the
+       default state), we change to the RECEIVING_HEADER state when we
+       get the first byte. If we are receiving header, we put all
+       bytes we have into a header buffer until the full header has
+       been received. If we have received the header, we parse it. If
+       we have received and parsed the header, we are ready to receive
+       data. Finally, if there is data left in the incoming packet, we
+       repeat the process. */
 
-    if(s->state == WEBSOCKET_STATE_CONNECTED) {
+    if(s->state == WEBSOCKET_STATE_WAITING_FOR_HEADER) {
+      s->state = WEBSOCKET_STATE_RECEIVING_HEADER;
+      s->headercacheptr = 0;
+    }
+
+    if(s->state == WEBSOCKET_STATE_RECEIVING_HEADER) {
+      while(datalen > 0 && s->state == WEBSOCKET_STATE_RECEIVING_HEADER) {
+        receive_header_byte(s, data[0]);
+        data++;
+        datalen--;
+      }
+    }
+
+    if(s->state == WEBSOCKET_STATE_HEADER_RECEIVED) {
       /* If this is the start of an incoming websocket data frame, we
          decode the header and check if we should act on in. If not, we
          pipe the data to the application through a callback handler. If
          data arrives in multiple packets, it is up to the application to
          put it back together again. */
 
-
       /* The websocket header is at the start of the incoming data. */
-      hdr = (struct websocket_frame_hdr *)data;
+      hdr = (struct websocket_frame_hdr *)s->headercache;
 
       /* The s->len field holds the length of the application data
        * chunk that we are about to receive. */
@@ -354,12 +434,10 @@ websocket_http_client_datahandler(struct websocket_http_client_state *client_sta
          See if the application data chunk is masked or not. If it is,
          we copy the bitmask into the s->mask field. */
       if((hdr->len & WEBSOCKET_MASK_BIT) == 0) {
-        user_data = (uint8_t *)maskptr;
-        /*        printf("No mask\n");*/
+        /*        PRINTF("No mask\n");*/
       } else {
-        user_data = (uint8_t *)&maskptr->mask[4];
         memcpy(s->mask, &maskptr->mask, sizeof(s->mask));
-        /*        printf("There was a mask, %02x %02x %02x %02x\n",
+        /*        PRINTF("There was a mask, %02x %02x %02x %02x\n",
                   s->mask[0], s->mask[1], s->mask[2], s->mask[3]);*/
       }
 
@@ -367,75 +445,77 @@ websocket_http_client_datahandler(struct websocket_http_client_state *client_sta
        * s->opcode field. */
       s->opcode = hdr->opcode & WEBSOCKET_OPCODE_MASK;
 
-      header_len = (int)(user_data - data);
-      appdata_len = datalen - header_len;
-
       if(s->opcode == WEBSOCKET_OPCODE_PING) {
         /* If the opcode is ping, we change the opcode to a pong, and
          * send the data back. */
         hdr->opcode = (hdr->opcode & (~WEBSOCKET_OPCODE_MASK)) |
           WEBSOCKET_OPCODE_PONG;
-        websocket_http_client_send(&s->s, data, s->len + 2);
-        printf("Got ping\n");
+        websocket_http_client_send(&s->s, (const uint8_t*)hdr, 2);
+        websocket_http_client_send(&s->s, (const uint8_t*)data, s->len);
+        PRINTF("Got ping\n");
+        call(s, WEBSOCKET_PINGED, NULL, 0);
+        s->state = WEBSOCKET_STATE_WAITING_FOR_HEADER;
       } else if(s->opcode == WEBSOCKET_OPCODE_BIN ||
                 s->opcode == WEBSOCKET_OPCODE_TEXT) {
 
         /* If the opcode is bin or text, and there is application
          * layer data in the packet, we call the application to
          * process it. */
-
-        /*        printf("s->len %d, datalen is %d, appdata_len %d\n",
-               s->len, datalen,
-               appdata_len);*/
         if(s->len > 0) {
           s->state = WEBSOCKET_STATE_RECEIVING_DATA;
-          if(appdata_len > 0) {
+          if(datalen > 0) {
             int len;
 #define MIN(a, b) ((a) < (b)? (a): (b))
-            len = MIN(s->len, appdata_len);
+            len = MIN(s->len, datalen);
             /* XXX todo: mask if needed. */
-            call(s, WEBSOCKET_DATA, user_data, len);
-            user_data += len;
+            call(s, WEBSOCKET_DATA, data, len);
+            data += len;
             s->len -= len;
-            appdata_len -= len;
+            datalen -= len;
           }
         }
       }
 
-      if(s->len <= 0) {
-        s->state = WEBSOCKET_STATE_CONNECTED;
-      }
+      if(s->len == 0) {
+        call(s, WEBSOCKET_DATA_RECEVIED, NULL, 0);
+        s->state = WEBSOCKET_STATE_WAITING_FOR_HEADER;
 
-      /* Need to keep parsing the incoming data to check for more
-       frames, if the incoming datalen is > than s->len. */
-      if(s->len == 0 && appdata_len > 0) {
-        printf("XXX 1 again\n");
-        websocket_http_client_datahandler(client_state,
-                                          user_data, appdata_len);
+        /* Need to keep parsing the incoming data to check for more
+           frames, if the incoming datalen is > than s->len. */
+        if(datalen > 0) {
+          PRINTF("XXX 1 again\n");
+          websocket_http_client_datahandler(client_state,
+                                            data, datalen);
+        }
       }
     } else if(s->state == WEBSOCKET_STATE_RECEIVING_DATA) {
       /* XXX todo: mask if needed. */
-      /*      printf("Calling with s->len %d datalen %d\n",
+      /*      PRINTF("Calling with s->len %d datalen %d\n",
               s->len, datalen);*/
-      if(datalen < s->len) {
-        call(s, WEBSOCKET_DATA, data, datalen);
-        s->len -= datalen;
-      } else {
-        call(s, WEBSOCKET_DATA, data, s->len);
-        data += s->len;
-        datalen -= s->len;
-        s->len = 0;
+      if(datalen > 0) {
+        if(datalen < s->len) {
+          call(s, WEBSOCKET_DATA, data, datalen);
+          s->len -= datalen;
+          data += datalen;
+          datalen = 0;
+        } else {
+          call(s, WEBSOCKET_DATA, data, s->len);
+          data += s->len;
+          datalen -= s->len;
+          s->len = 0;
+        }
       }
-      if(s->len <= 0) {
-        s->state = WEBSOCKET_STATE_CONNECTED;
-      }
-      /* Need to keep parsing the incoming data to check for more
-         frames, if the incoming datalen is > than len. */
-      if(s->len == 0 && datalen > 0) {
-        printf("XXX 2 again\n");
-        websocket_http_client_datahandler(client_state,
-                                          data, datalen);
+      if(s->len == 0) {
+        call(s, WEBSOCKET_DATA_RECEVIED, NULL, 0);
+        s->state = WEBSOCKET_STATE_WAITING_FOR_HEADER;
+        /* Need to keep parsing the incoming data to check for more
+           frames, if the incoming datalen is > than len. */
+        if(datalen > 0) {
+          PRINTF("XXX 2 again (datalen %d s->len %d)\n", datalen, (int)s->len);
+          websocket_http_client_datahandler(client_state,
+                                            data, datalen);
 
+        }
       }
     }
   }
@@ -465,7 +545,7 @@ websocket_open(struct websocket *s, const char *url,
   }
 
   if(s->state != WEBSOCKET_STATE_CLOSED) {
-    printf("websocket_open: closing websocket before opening it again.\n");
+    PRINTF("websocket_open: closing websocket before opening it again.\n");
     websocket_close(s);
   }
   s->callback = c;
@@ -492,20 +572,21 @@ send_data(struct websocket *s, const void *data,
   struct websocket_frame_hdr hdr;
   struct websocket_frame_mask mask;
 
-  if(datalen > 126) {
-    printf("websocket_send: data len > 126 not implemented\n");
-    return 0;
+  if(s->state == WEBSOCKET_STATE_CLOSED ||
+     s->state == WEBSOCKET_STATE_DNS_REQUEST_SENT ||
+     s->state == WEBSOCKET_STATE_HTTP_REQUEST_SENT) {
+    /* Trying to send data on a non-connected websocket. */
+    return -1;
   }
 
   if(2 + 4 + datalen > websocket_http_client_sendbuflen(&s->s)) {
+    PRINTF("websocket: too few bytes left (%d left, %d needed)\n",
+           websocket_http_client_sendbuflen(&s->s),
+           2 + 4 + datalen);
     return -1;
   }
 
   hdr.opcode = WEBSOCKET_FIN_BIT | data_type_opcode;
-
-  /* Data from client must always have the mask bit set, and a data
-     mask sent right after the header. */
-  hdr.len = datalen | WEBSOCKET_MASK_BIT;
 
   /* XXX: We just set a dummy mask of 0 for now and hope that this
      works. */
@@ -513,7 +594,26 @@ send_data(struct websocket *s, const void *data,
     mask.mask[1] =
     mask.mask[2] =
     mask.mask[3] = 0;
-  websocket_http_client_send(&s->s, (uint8_t *)&hdr, 2);
+
+
+  /* If the datalen is larger than 125 bytes, we need to send the data
+     length as two bytes. If the data length would be larger than 64k,
+     we should send the length as 4 bytes, but since we specify the
+     datalen as an unsigned 16-bit int, we do not handle the 64k case
+     here. */
+  if(datalen > 125) {
+    /* Data from client must always have the mask bit set, and a data
+       mask sent right after the header. */
+    hdr.len = 126 | WEBSOCKET_MASK_BIT;
+    hdr.extlen[0] = datalen >> 8;
+    hdr.extlen[1] = datalen & 0xff;
+    websocket_http_client_send(&s->s, (uint8_t *)&hdr, 4);
+  } else {
+    /* Data from client must always have the mask bit set, and a data
+       mask sent right after the header. */
+    hdr.len = datalen | WEBSOCKET_MASK_BIT;
+    websocket_http_client_send(&s->s, (uint8_t *)&hdr, 2);
+  }
   websocket_http_client_send(&s->s, (uint8_t *)&mask, 4);
   websocket_http_client_send(&s->s, data, datalen);
   return datalen;
@@ -522,7 +622,7 @@ send_data(struct websocket *s, const void *data,
 int
 websocket_send_str(struct websocket *s, const char *str)
 {
-  printf("websocket_send_str %s\n", str);
+  //  PRINTF("websocket_send_str %s\n", str);
   return send_data(s, str, strlen(str), WEBSOCKET_OPCODE_TEXT);
 }
 /*---------------------------------------------------------------------------*/

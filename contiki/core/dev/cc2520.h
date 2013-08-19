@@ -113,13 +113,16 @@ void cc2520_set_cca_threshold(int value);
 
 
 /* Read a register in the CC2520 */
-#define CC2520_READ_REG(adr,data)                                       \
-  do {                                                                  \
-    CC2520_SPI_ENABLE();                                                \
-    SPI_WRITE((CC2520_INS_MEMRD | ((adr>>8)&0xFF)));                    \
-    SPI_WRITE((adr & 0xFF));                                            \
-    SPI_READ(data);                                                     \
-    CC2520_SPI_DISABLE();                                               \
+#define CC2520_READ_REG(adr,data)                       \
+  do {                                                  \
+    CC2520_SPI_ENABLE();                                \
+    SPI_WRITE(CC2520_INS_MEMRD);                        \
+    SPI_WRITE(adr);                                     \
+    data = (uint8_t)SPI_RXBUF;                          \
+    SPI_TXBUF = 0;                                      \
+    SPI_WAITFOREORx();                                  \
+    data = SPI_RXBUF & 0xFF;                            \
+    CC2520_SPI_DISABLE();                               \
   } while(0)
 
 #define CC2520_READ_FIFO_BYTE(data)                                     \

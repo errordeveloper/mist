@@ -45,7 +45,7 @@
 
 #include "contiki-conf.h"
 
-#ifdef CC11xx_H
+#if CC11xx_H || CONTIKI_TARGET_TRXEB1120 || CONTIKI_TARGET_ETH1120
 #define SNIFFER_CONF_RADIO_SET_PROMISCUOUS cc11xx_set_promiscuous
 #endif /* CC11xx_H */
 

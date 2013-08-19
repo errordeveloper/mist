@@ -1,5 +1,12 @@
+ifndef GCC
 ifndef IAR
-$(warning GCC compiler is not supported for this platform, use IAR instead (set IAR=1))
+#$(error You need to explicitly set either GCC=1 or IAR=1. GCC does not support using the USB as serial port.)
+GCC=1
+endif
+endif
+
+ifdef GCC
+$(warning GCC selected. GCC does not support using the USB as serial port.)
 endif
 
 # Default Mist apps
@@ -8,7 +15,7 @@ PLATFORMAPPS += aes multichan drowsie drowsie-multichannel
 CONTIKI_TARGET_DIRS = . dev apps net dev/sdk dev/spirit1 \
 		STM32L1xx_StdPeriph_Driver STM32L1xx_StdPeriph_Driver/inc STM32L1xx_StdPeriph_Driver/src
 
-ARCH_CONTIKI += leds.c leds-arch.c node-id.c rimestats.c
+ARCH_CONTIKI += leds.c leds-arch.c node-id.c rimestats.c flash.c stack-avail.c
 # uart1x.c lcd.c spix.c hal_lcd.c hal_lcd_fonts.c cfs-ram.c hal-pmm.c
 
 # board and CPU (unfortunately here, should be moved to CPU folder) drivers
@@ -98,6 +105,10 @@ endif
 include $(CONTIKI)/cpu/arm/stm32l152/Makefile.stm32l152
 CONTIKI_SOURCEFILES += $(ARCH)
 
+ifdef RF_CHANNEL
+CFLAGS+=-DRF_CHANNEL=$(RF_CHANNEL)
+endif
+
 # build rules ------------------------------------
 
 CLEAN += *.mist-spirit1 symbols.c symbols.h contiki-mist-spirit1.log 
@@ -109,7 +120,7 @@ help:
 	@echo make help - shows this help
 	@echo make TARGET=mist-spirit1 savetarget - stores selection of target to avoid using TARGET= on every make invokation
 	@echo make program.upload - compiles and uploads program to connected board
-	@echo make program.upload IAR=1 - uses the IAR compiler instead of mspgcc (not implemented yet)
+	@echo make program.upload IAR=1 - uses the IAR compiler instead of gcc (not implemented yet)
 	@echo make program.upload NODEID=x - uploads with node_id set to x
 
 # Serialdump rules
@@ -132,8 +143,27 @@ endif
 STLINKCLI=ST-LINK_CLI.exe
 %.upload: %.hex
 	#Note: this command only uploads to a single connected device
+	$(STLINKCLI) -ME || $(STLINKCLI) -ME || $(STLINKCLI) -ME || $(STLINKCLI) -ME
 	$(STLINKCLI) -Q -P $*.hex -V -Run
+
+
+# devcon requires WinDriverKit, downloadable from microsoft.com
+DEVCON=devcon.exe
+DEVCON_ALLDEVS=$(shell $(DEVCON) find =USB | grep "STMicroelectronics STLink dongle" | cut -d " " -f 1)
+devcon_enableonly:
+	devcon disable =USB @"USB\VID_0483&PID_3748\*"
+	devcon enable =USB @"$(ID)"
+
+%.uploadall: %.hex
+	$(foreach D,$(DEVCON_ALLDEVS), echo D IS "$(D)" && make devcon_enableonly ID="$(D)" && make $*.upload && ) echo "Done"
+	devcon enable =USB @"USB\VID_0483&PID_3748\*"
 
 login:
 	@echo "Connecting to $(COMPORT)"
 	$(CONTIKI)/tools/sky/$(SERIALDUMP) -b115200 $(COMPORT)
+
+%.ramusage: %.$(TARGET)
+	$(NM) -S $< --size-sort --line-numbers | grep -v " T " | grep -v " t "
+%.romusage: %.$(TARGET)
+	$(NM) -S $< --size-sort --line-numbers | grep -v " b " | grep -v " B " | grep -v " d " | grep -v " D "
+	

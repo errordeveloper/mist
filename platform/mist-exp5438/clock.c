@@ -58,7 +58,7 @@ ISR(TIMER1_A1, timera1)
 
     /* HW timer bug fix: Interrupt handler called before TR==CCR.
      * Occurrs when timer state is toggled between STOP and CONT. */
-    while(TA1CTL & MC1 && TA1CCR1 - TA1R == 1);
+    while((TA1CTL & MC1) && TA1CCR1 - TA1R == 1);
 
     /* Make sure interrupt time is future */
     do {

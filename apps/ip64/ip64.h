@@ -52,6 +52,8 @@ void ip64_set_hostaddr(const uip_ip4addr_t *hostaddr);
 void ip64_set_netmask(const uip_ip4addr_t *netmask);
 void ip64_set_draddr(const uip_ip4addr_t *draddr);
 
+int ip64_hostaddr_is_configured(void);
+
 extern uint8_t *ip64_packet_buffer;
 extern uint16_t ip64_packet_buffer_maxlen;
 

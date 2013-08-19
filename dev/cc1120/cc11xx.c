@@ -41,24 +41,12 @@
 #include "contiki.h"
 
 /* Radio type sanity check */
-#if !CC11xx_CC1101 && !CC11xx_CC1120
-#error Unsupported radio type, define either of CC11xx_CC1101 and CC11xx_CC1120
-#endif /* !CC11xx_CC1101 && !CC11xx_CC1120 */
-#if CC11xx_CC1101 && CC11xx_CC1120
-#error Radio type configuration error: both CC11xx_CC1101 or CC11xx_CC1120 are defined
-#endif /* CC11xx_CC1101 && CC11xx_CC1120 */
 
 #include "cc11xx.h"
 #include "cc11xx-arch.h"
 
-#if CC11xx_CC1101
-#include "cc1101-const.h"
-#include "cc1101-config.h"
-#endif /* CC11xx_CC1101 */
-#if CC11xx_CC1120
 #include "cc1120-const.h"
 #include "cc1120-config.h"
-#endif /* CC11xx_CC1120 */
 
 #include "dev/leds.h"
 
@@ -71,6 +59,14 @@
 #include <stdio.h>
 
 #define DEBUG 0
+
+#if DEBUG
+#define LEDS_ON(x)  leds_on(x)
+#define LEDS_OFF(x) leds_off(x)
+#else /* DEBUG */
+#define LEDS_ON(x)
+#define LEDS_OFF(x)
+#endif /* DEBUG */
 
 #define BUSYWAIT_UNTIL(cond, max_time)                                  \
     do {                                                                  \
@@ -112,60 +108,6 @@ static char promiscuous_mode = 0;
 static void calibrate_manual(void);
 #endif /* PERFORM_MANUAL_CALIBRATION */
 
-#if CC11xx_CC1101
-// TODO XXX Let's put the configuration in the _init() function like in the cc1120!
-// (or even better, in the _arch_init()...)
-static const unsigned char cc1101_register_config[CC11xx_NR_REGISTERS] = {
-    CC11xx_SETTING_IOCFG2,
-    CC11xx_SETTING_IOCFG1,
-    CC11xx_SETTING_IOCFG0,
-    CC11xx_SETTING_FIFOTHR,
-    0xD3,
-    0x91,
-    CC11xx_SETTING_PKTLEN,
-    CC11xx_SETTING_PKTCTRL1,
-    CC11xx_SETTING_PKTCTRL0,
-    CC11xx_SETTING_ADDR,
-    CC11xx_SETTING_CHANNR,
-    CC11xx_SETTING_FSCTRL1,
-    CC11xx_SETTING_FSCTRL0,
-    CC11xx_SETTING_FREQ2,
-    CC11xx_SETTING_FREQ1,
-    CC11xx_SETTING_FREQ0,
-    CC11xx_SETTING_MDMCFG4,
-    CC11xx_SETTING_MDMCFG3,
-    CC11xx_SETTING_MDMCFG2,
-    CC11xx_SETTING_MDMCFG1,
-    CC11xx_SETTING_MDMCFG0,
-    CC11xx_SETTING_DEVIATN,
-    CC11xx_SETTING_MCSM2,
-    CC11xx_SETTING_MCSM1,
-    CC11xx_SETTING_MCSM0,
-    CC11xx_SETTING_FOCCFG,
-    CC11xx_SETTING_BSCFG,
-    CC11xx_SETTING_AGCCTRL2,
-    CC11xx_SETTING_AGCCTRL1,
-    CC11xx_SETTING_AGCCTRL0,
-    CC11xx_SETTING_WOREVT1,
-    CC11xx_SETTING_WOREVT0,
-    CC11xx_SETTING_WORCTRL,
-    CC11xx_SETTING_FREND1,
-    CC11xx_SETTING_FREND0,
-    CC11xx_SETTING_FSCAL3,
-    CC11xx_SETTING_FSCAL2,
-    CC11xx_SETTING_FSCAL1,
-    CC11xx_SETTING_FSCAL0,
-    CC11xx_SETTING_RCCTRL1,
-    CC11xx_SETTING_RCCTRL0,
-    CC11xx_SETTING_FSTEST,
-    CC11xx_SETTING_PTEST,
-    CC11xx_SETTING_AGCTEST,
-    CC11xx_SETTING_TEST2,
-    CC11xx_SETTING_TEST1,
-    CC11xx_SETTING_TEST0
-};
-#endif /* CC11xx_CC1101 */
-
 /* Prototypes: */
 static void reset(void);
 static uint8_t state(void);
@@ -174,9 +116,6 @@ static unsigned char single_read(uint16_t addr);
 static uint8_t single_write(uint16_t addr, uint8_t value);
 static void burst_read(uint16_t addr, uint8_t *buffer, uint8_t count);
 static void burst_write(uint16_t addr, uint8_t *buffer, uint8_t count);
-#if CC11xx_CC1101
-static void pa_table_write(uint8_t pa_value);
-#endif /* CC11xx_CC1101 */
 
 static void pollhandler(void);
 
@@ -209,11 +148,6 @@ void cc11xx_set_promiscuous(char p);
 #define WRITE_BIT 0x00
 #define BURST_BIT 0x40
 #define IS_EXTENDED(x) (x & 0x2F00)
-
-#if CC11xx_CC1101
-#define RXFIFO_OVERFLOW 0x80
-#define TXFIFO_UNDERFLOW 0x80
-#endif /* CC11xx_CC1101 */
 
 /*---------------------------------------------------------------------------*/
 
@@ -413,83 +347,55 @@ static void
 write_txfifo(uint8_t *data, uint8_t len)
 {
   uint8_t status;
-  int i;
+  int tosend;
 #define CC11xx_STATUS_STATE_MASK             0x70
 #define CC11xx_STATUS_STATE_TXFIFO_UNDERFLOW 0x70
 
   LOCK_SPI();
   burst_write(CC11xx_TXFIFO, &len, 1);
 
-#define FIRST_TX 8
+#define FIRST_TX      126
+#define SUBSEQUENT_TX 32
 
-  i = MIN(len, FIRST_TX);
-  burst_write(CC11xx_TXFIFO, data, i);
+  tosend = MIN(len, FIRST_TX);
+  burst_write(CC11xx_TXFIFO, data, tosend);
   strobe(CC11xx_STX);
 
-  if(len > i) {
-    CC11xx_ARCH_SPI_ENABLE();
-    CC11xx_ARCH_SPI_RW_BYTE(CC11xx_TXFIFO | 0x40);
-    for(; i < len; i++) {
+  do {
+    rtimer_clock_t t0;
+    t0 = RTIMER_NOW();
 
-      status = CC11xx_ARCH_SPI_RW_BYTE(data[i]);
-
-      if((status & CC11xx_STATUS_STATE_MASK) ==
-          CC11xx_STATUS_STATE_TXFIFO_UNDERFLOW) {
-        CC11xx_ARCH_SPI_DISABLE();
-        /* TX FIFO underflow, acknowledge it with an SFTX (else the
-         radio becomes completely unresponsive) followed by an SRX,
-         and break the transmission. */
+    while(txbytes() >= SUBSEQUENT_TX) {
+      if(!RTIMER_CLOCK_LT(RTIMER_NOW(), t0 + (RTIMER_SECOND / 10))) {
+        printf("cc1120: write_txfifo timeout\n");
         strobe(CC11xx_SFTX);
         strobe(CC11xx_SRX);
         break;
-      } else if((status & 0x0f) < 2) {
-        CC11xx_ARCH_SPI_DISABLE();
-        BUSYWAIT_UNTIL(txbytes() < 60 || (txbytes() & 0x80) != 0,
-                       RTIMER_SECOND / 10);
-        if(txbytes() & 0x80) {
-          /* TX FIFO underflow. */
-          strobe(CC11xx_SFTX);
-          strobe(CC11xx_SRX);
-          break;
-        }
-        CC11xx_ARCH_SPI_ENABLE();
-        CC11xx_ARCH_SPI_RW_BYTE(CC11xx_TXFIFO | 0x40);
+      }
+      if(txbytes() & 0x80) {
+        /* TX FIFO underflow. */
+        strobe(CC11xx_SFTX);
+        strobe(CC11xx_SRX);
+        printf("cc11xx.c: write_txfifo txbytes underflow\n");
+        break;
       }
     }
-    CC11xx_ARCH_SPI_DISABLE();
-  }
+
+    len -= tosend;
+    data += tosend;
+    tosend = MIN(len, SUBSEQUENT_TX);
+    if(tosend > 0) {
+      printf("write %d\n", tosend);
+      burst_write(CC11xx_TXFIFO, data, tosend);
+    }
+  } while(len > 0);
+
   RELEASE_SPI();
 }
-/*---------------------------------------------------------------------------*/
-#if CC11xx_CC1101
-static void
-pa_table_write(uint8_t val)
-{
-  uint8_t table[8];
-  int i;
-
-  for(i = 0; i < sizeof(table); i++) {
-    table[i] = val;
-  }
-
-  burst_write(CC11xx_PATABLE, table, 8);
-}
-#endif /* CC11xx_CC1101 */
 /*---------------------------------------------------------------------------*/
 static void
 check_txfifo(void)
 {
-#if CC11xx_CC1101
-  uint8_t b;
-  b = txbytes();
-  if((b & TXFIFO_UNDERFLOW) != 0) {
-    /* Acknowledge TX FIFO underflow. */
-    strobe(CC11xx_SFTX);
-    strobe(CC11xx_SRX);
-    return;
-  }
-#endif /* CC11xx_CC1101 */
-
   if(state() == CC11xx_STATUS_STATE_TXFIFO_UNDERFLOW) {
     /* Acknowledge TX FIFO underflow. */
     strobe(CC11xx_SFTX);
@@ -540,25 +446,14 @@ pollhandler(void)
     request_set_channel = -1;
   }
 
-  do {
-    //    printf("p(");
-    packetbuf_clear();
-    len = read_packet(packetbuf_dataptr(), PACKETBUF_SIZE);
+  packetbuf_clear();
+  len = read_packet(packetbuf_dataptr(), PACKETBUF_SIZE);
 
-    if(len > 0) {
-      packetbuf_set_datalen(len);
-      /*      printf("RDC input %d\n", len);*/
-      NETSTACK_RDC.input();
-    }
-
-    /* If we received a packet (or parts thereof) while processing the
-       previous packet, we immediately pull it out from the RX
-       FIFO. */
-    //    printf("[");
-    cc11xx_rx_interrupt();
-    //    printf("]");
-    //    printf(")\n");
-  } while(packet_rx_len > 0);
+  if(len > 0) {
+    packetbuf_set_datalen(len);
+    /*      printf("RDC input %d\n", len);*/
+    NETSTACK_RDC.input();
+  }
 }
 /*---------------------------------------------------------------------------*/
 static void
@@ -601,7 +496,9 @@ send_ack(uint8_t seqno)
   is_transmitting = 1;
   write_txfifo((unsigned char *)ackdata, len);
   check_txfifo();
+  BUSYWAIT_UNTIL((state() != CC11xx_STATE_TX), RTIMER_SECOND / 10);
   is_transmitting = 0;
+
 #if DEBUG
   printf("^");
 #endif /* DEBUG */
@@ -661,9 +558,10 @@ input_byte(uint8_t byte)
   rxstate.len = byte;
 
   if(rxstate.len + AUX_LEN > sizeof(rxstate.buf) || rxstate.len == 0) {
-    printf("Bad len %d, state %d rxbytes %d\n", rxstate.len, state(),
-           read_rxbytes());
+    /*    printf("Bad len %d, state %d rxbytes %d\n", rxstate.len, state(),
+          read_rxbytes());*/
     flushrx();
+    rxstate.receiving = 0;
     PT_EXIT(&rxstate.pt);
   }
 
@@ -695,19 +593,17 @@ input_byte(uint8_t byte)
 
     cc11xx_crc_errors++;
     flushrx();
-  } else if(packet_rx_len > 0) {
-#if DEBUG
-    printf("Packet in the buffer (%d), dropping %d bytes\n", packet_rx_len, rxstate.len);
-#endif /* DEBUG */
-    flushrx();
-    process_poll(&cc11xx_process);
   } else if(rxstate.len < ACK_LEN) {
     /* Drop packets that are way too small: less than ACK_LEN (3) bytes
        long. */
 #if DEBUG
     printf("!");
 #endif /* DEBUG */
-  } else {
+
+  } else if(!pending_packet()) {
+    /* If we have a pending packet in the buffer already, we drop the
+       current packet, without sending an ACK. */
+
     /* Read out the first three bytes to determine if we should send an
        ACK or not. */
 
@@ -717,26 +613,27 @@ input_byte(uint8_t byte)
       frame802154_t info154;
       if(frame802154_parse(rxstate.buf, rxstate.len, &info154) != 0) {
         /* XXX Potential optimization here: we could check if the
-    frame is destined for us, or for the broadcast address and
-    discard the packet if it isn't for us. */
-        if(promiscuous_mode || info154.fcf.frame_type == FRAME802154_ACKFRAME
-            || is_broadcast_addr(FRAME802154_SHORTADDRMODE,
-                                 (uint8_t *)&info154.dest_addr)
-            || is_broadcast_addr(FRAME802154_LONGADDRMODE,
-                                 (uint8_t *)&info154.dest_addr)
-            || rimeaddr_cmp((rimeaddr_t *)&info154.dest_addr,
-                            &rimeaddr_node_addr)) {
+           frame is destined for us, or for the broadcast address and
+           discard the packet if it isn't for us. */
+        if(promiscuous_mode ||
+           info154.fcf.frame_type == FRAME802154_ACKFRAME ||
+           is_broadcast_addr(FRAME802154_SHORTADDRMODE,
+                             (uint8_t *)&info154.dest_addr) ||
+           is_broadcast_addr(FRAME802154_LONGADDRMODE,
+                             (uint8_t *)&info154.dest_addr) ||
+           rimeaddr_cmp((rimeaddr_t *)&info154.dest_addr,
+                        &rimeaddr_node_addr)) {
 
           /* For dataframes that has the ACK request bit set and that
-       is destined for us, we send an ack. */
+             is destined for us, we send an ack. */
           if(info154.fcf.frame_type == FRAME802154_DATAFRAME &&
-              info154.fcf.ack_required != 0 &&
-              rimeaddr_cmp((rimeaddr_t *)&info154.dest_addr,
-                           &rimeaddr_node_addr)) {
+             info154.fcf.ack_required != 0 &&
+             rimeaddr_cmp((rimeaddr_t *)&info154.dest_addr,
+                          &rimeaddr_node_addr)) {
             send_ack(info154.seq);
 
             /* Make sure that we don't put the radio in the IDLE state
-         before the ACK has been fully transmitted. */
+               before the ACK has been fully transmitted. */
             BUSYWAIT_UNTIL((state() != CC11xx_STATE_TX), RTIMER_SECOND / 10);
             ENERGEST_OFF(ENERGEST_TYPE_TRANSMIT);
             ENERGEST_ON(ENERGEST_TYPE_LISTEN);
@@ -748,12 +645,13 @@ input_byte(uint8_t byte)
               flushrx();
             }
           }
+
           memcpy((void *)packet_rx, rxstate.buf,
                  rxstate.len + AUX_LEN);
           packet_rx_len = rxstate.len + AUX_LEN; /* including AUX */
 
           process_poll(&cc11xx_process);
-#if DEBUG 
+#if DEBUG
           printf("#");
 #endif /* DEBUG */
         }
@@ -786,6 +684,10 @@ cc11xx_rx_interrupt(void)
   }
   interrupt_pending = 0;
 
+  /* Lock SPI before we do any SPI operations, in case we are called
+     from a non-interrupt context. */
+  LOCK_SPI();
+
   s = state();
   if(s == CC11xx_STATE_RXFIFO_OVERFLOW) {
     burst_read(CC11xx_RXBYTES, &rxbytes, 1);
@@ -794,6 +696,7 @@ cc11xx_rx_interrupt(void)
     printf("rxbytes 0x%02x\n", rxbytes);
 #endif /* DEBUG */
     flushrx();
+    RELEASE_SPI();
     return 1;
   }
   if(s == CC11xx_STATE_TXFIFO_UNDERFLOW) {
@@ -802,6 +705,7 @@ cc11xx_rx_interrupt(void)
 #endif /* DEBUG */
     strobe(CC11xx_SFTX);
     strobe(CC11xx_SRX);
+    RELEASE_SPI();
     return 1;
   }
 
@@ -810,40 +714,33 @@ cc11xx_rx_interrupt(void)
     printf("Packet expired, flushing fifo\n");
 #endif /* DEBUG */
     flushrx();
+    RELEASE_SPI();
     return 1;
   }
 
   /* Read each byte from the RXFIFO and put it into the input_byte()
-   function, which takes care of the reception logic. */
+     function, which takes care of the reception logic. */
   do {
     uint8_t byte;
-    int i, numbytes=0;
+    int i, numbytes;
+
+    numbytes = 0;
 
     rxbytes = read_rxbytes();
 
-#if CC11xx_CC1101
-    if(rxbytes & RXFIFO_OVERFLOW) {
-#if DEBUG
-      printf("ovf\n");
-#endif /* DEBUG */
-      flushrx();
-      process_poll(&cc11xx_process);
-      leds_off(LEDS_GREEN);
-      return 1;
-    }
-#elif CC11xx_CC1120 /* CC11xx_CC1101 */
     if(state() == CC11xx_STATE_RXFIFO_OVERFLOW) {
 #if DEBUG
       printf("ovf\n");
 #endif /* DEBUG */
       flushrx();
       process_poll(&cc11xx_process);
-      leds_off(LEDS_GREEN);
+      LEDS_OFF(LEDS_GREEN);
+      RELEASE_SPI();
       return 1;
     }
-#endif /* CC11xx_CC1101 */
 
     if(rxbytes == 0) {
+      RELEASE_SPI();
       return 1;
     }
     if(rxbytes > 1 + CC11xx_MAX_PAYLOAD + AUX_LEN) {
@@ -851,13 +748,14 @@ cc11xx_rx_interrupt(void)
       printf("rxbytes too large %d\n", rxbytes);
 #endif /* DEBUG */
       flushrx();
+      RELEASE_SPI();
       return 1;
     }
 
     /* Check if we are receiving a packet. If not, we feed the first
-     byte of data, which hold the length of the packet, to the input
-     function. This will help us later decide how much to read from
-     the rx fifo. */
+       byte of data, which holds the length of the packet, to the
+       input function. This will help us later decide how much to read
+       from the rx fifo. */
     if(!is_receiving()) {
       burst_read(CC11xx_RXFIFO, &byte, 1);
       input_byte(byte);
@@ -885,19 +783,23 @@ cc11xx_rx_interrupt(void)
           byte = tmpbuf[i];
           input_byte(byte);
         }
-      } else {
+      } else if(numbytes != 0) {
+#if DEBUG
+        printf("numbytes wrong %d\n", numbytes);
+#endif /* DEBUG */
         flushrx();
+        RELEASE_SPI();
         return 1;
       }
     }
 
     rxbytes = read_rxbytes();
-  } while(rxbytes > 1);
+  } while(rxbytes > 1 && packet_rx_len == 0);
 
 #if DEBUG
   printf("-");
 #endif /* DEBUG */
-
+  RELEASE_SPI();
   return 1;
 }
 /*---------------------------------------------------------------------------*/
@@ -1057,7 +959,7 @@ on(void)
 
   ENERGEST_ON(ENERGEST_TYPE_LISTEN);
 
-  leds_on(LEDS_RED);
+  LEDS_ON(LEDS_RED);
   return 1;
 }
 /*---------------------------------------------------------------------------*/
@@ -1075,7 +977,7 @@ off(void)
   RELEASE_SPI();
 
   ENERGEST_OFF(ENERGEST_TYPE_LISTEN);
-  leds_off(LEDS_RED);
+  LEDS_OFF(LEDS_RED);
 
   return 1;
 }
@@ -1090,11 +992,6 @@ reset(void)
   strobe(CC11xx_SRES);
   strobe(CC11xx_SNOP); /* XXX needed? */
 
-#if CC11xx_CC1101
-  burst_write(CC11xx_IOCFG2, (unsigned char *)cc1101_register_config,
-              CONF_REG_SIZE);
-  pa_table_write(CC11xx_PA_11);
-#elif CC11xx_CC1120
   /* TODO Move to *-arch.c or smartstudio.c? */
   single_write(CC11xx_IOCFG3, CC11xx_SETTING_IOCFG3);
   single_write(CC11xx_IOCFG2, CC11xx_SETTING_IOCFG2);
@@ -1146,7 +1043,6 @@ reset(void)
   single_write(CC11xx_XOSC5, CC11xx_SETTING_XOSC5);
   single_write(CC11xx_XOSC2, CC11xx_SETTING_XOSC2);
   single_write(CC11xx_XOSC1, CC11xx_SETTING_XOSC1);
-#endif /* CC11xx_CC1101 or CC11xx_CC1120? */
 
   RELEASE_SPI();
 
@@ -1156,19 +1052,8 @@ reset(void)
 static uint8_t
 channel_get(void)
 {
-#if CC11xx_CC1101
-  return single_read(CC11xx_CHANNR);
-#elif CC11xx_CC1120
   printf("channel_get not implemented\n");
   return -1;
-#endif /* CC11xx_CC1101 or CC11xx_CC1120? */
-}
-/*---------------------------------------------------------------------------*/
-/* XXX Placeholder awaiting new radio_driver API */
-void
-cc1101_channel_set(uint8_t c)
-{
-  channel_set(c);
 }
 /*---------------------------------------------------------------------------*/
 /* XXX Placeholder awaiting new radio_driver API */
@@ -1194,9 +1079,6 @@ channel_set(uint8_t c)
 
   LOCK_SPI();
 
-#if CC11xx_CC1101
-  single_write(CC11xx_CHANNR, c);
-#elif CC11xx_CC1120
   /* XXX Requires FS_CFG.FSD_BANDSELECT == 0010b => LO divider 4 */
   /* XXX Requires SETTLING_CFG.FS_AUTOCAL == 01b */
   uint32_t freq, f_vco, freq_regs;
@@ -1244,7 +1126,6 @@ channel_set(uint8_t c)
   single_write(CC11xx_FREQ1, ((unsigned char*)&freq_regs)[1]);
   single_write(CC11xx_FREQ2, ((unsigned char*)&freq_regs)[2]);
   strobe(CC11xx_SRX);
-#endif /* CC11xx_CC1101 or CC11xx_CC1120? */
 
   RELEASE_SPI();
 }
@@ -1308,7 +1189,7 @@ read_lqi(void)
 }
 /*---------------------------------------------------------------------------*/
 /**
- * cc1101 receiving packet function - check Radio SFD
+ * receiving packet function - check Radio SFD
  */
 static int
 receiving_packet(void)
@@ -1381,25 +1262,6 @@ channel_clear(void)
 
   cca = 1; /* clear if no carrier detected */
 
-#if CC11xx_CC1101
-
-  //  printf("%d ", state());
-  if(radio_was_off) {
-    /* Why is this needed? */
-    burst_read(CC11xx_PKTSTATUS, &val, 1);
-    burst_read(CC11xx_PKTSTATUS, &val, 1);
-  }
-
-  if(state() == CC11xx_STATE_RX) {
-    burst_read(CC11xx_PKTSTATUS, &val, 1);
-    //    printf("%02x ", cca_bit);
-    cca = ((val & 0x10) >> 4);
-  } else {
-    //    printf("state %d\n", state());
-  }
-
-#elif CC11xx_CC1120
-
 #define CARRIER_SENSE_VALID BV(1)
 #define CARRIER_SENSE BV(2)
   burst_read(CC11xx_RSSI0, &val, 1);
@@ -1410,7 +1272,6 @@ channel_clear(void)
   } else {
     cca = 1;
   }
-#endif
 
   if(radio_was_off) {
     off();
@@ -1424,6 +1285,10 @@ channel_clear(void)
 static int
 init(void)
 {
+  static uint8_t initialized = 0;
+  if(initialized) {
+    return;
+  }
   cc11xx_arch_init();
   reset();
 
@@ -1438,6 +1303,7 @@ init(void)
   calibrate_manual();
 #endif /* PERFORM_MANUAL_CALIBRATION */
 
+  initialized = 1;
   return 1;
 }
 /*---------------------------------------------------------------------------*/

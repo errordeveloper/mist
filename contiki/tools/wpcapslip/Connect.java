@@ -47,8 +47,7 @@ public class Connect {
 
 	public static void main(String[] args) throws Exception {
 		if (args.length != 2) {
-			System.err.println("Usage: " + Connect.class.getName()
-					+ " [cmd1] [cmd2]");
+			System.err.println("Usage: " + Connect.class.getName() + " [cmd1] [cmd2]");
 			System.exit(1);
 		}
 
@@ -68,20 +67,27 @@ public class Connect {
 				byte[] buf = new byte[BUFSIZE];
 				try {
 					while (true) {
-						if (cmd1Input.available() > 0) {
-							numRead = cmd1Input.read(buf, 0,
-									cmd1Input.available());
-							if (cmd2Out != null) {
-								/* System.out.println("1>2 " + numRead); */
-								cmd2Out.write(buf, 0, numRead);
-								cmd2Out.flush();
-							}
+						numRead = cmd1Input.read(buf, 0, BUFSIZE);
+						if (numRead > 0 && cmd2Out != null) {
+							/* System.err.println("1>2 " + numRead); */
+							cmd2Out.write(buf, 0, numRead);
+							cmd2Out.flush();
 						}
 						Thread.sleep(1);
 					}
 				} catch (Exception e) {
+					e.printStackTrace();
 				}
-				System.out.println("cmd1 terminated.");
+				String exitVal = "?";
+				try {
+					if (cmd1Process != null) {
+						exitVal = "" + cmd1Process.exitValue();
+					}
+				} catch (IllegalStateException e) {
+					e.printStackTrace();
+					exitVal = "!";
+				}
+				System.out.println("cmd1 terminated: " + exitVal);
 				exit();
 			}
 		}, "read stdout cmd1");
@@ -117,20 +123,27 @@ public class Connect {
 				byte[] buf = new byte[BUFSIZE];
 				try {
 					while (true) {
-						if (cmd2Input.available() > 0) {
-							numRead = cmd2Input.read(buf, 0,
-									cmd2Input.available());
-							if (cmd1Out != null) {
-								/* System.out.println("2>1 " + numRead); */
-								cmd1Out.write(buf, 0, numRead);
-								cmd1Out.flush();
-							}
+						numRead = cmd2Input.read(buf, 0, BUFSIZE);
+						if (numRead > 0 && cmd1Out != null) {
+							/* System.err.println("2>1 " + numRead); */
+							cmd1Out.write(buf, 0, numRead);
+							cmd1Out.flush();
 						}
 						Thread.sleep(1);
 					}
 				} catch (Exception e) {
+					e.printStackTrace();
 				}
-				System.err.println("cmd2 terminated.");
+				String exitVal = "?";
+				try {
+					if (cmd2Process != null) {
+						exitVal = "" + cmd2Process.exitValue();
+					}
+				} catch (IllegalStateException e) {
+					e.printStackTrace();
+					exitVal = "!";
+				}
+				System.out.println("cmd2 terminated: " + exitVal);
 				exit();
 			}
 		}, "read stdout cmd2");
@@ -173,7 +186,6 @@ public class Connect {
 			}
 		} catch (Exception e) {
 		}
-		System.out.flush();
 		System.err.flush();
 		System.exit(1);
 	}

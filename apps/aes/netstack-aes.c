@@ -31,6 +31,7 @@
  */
 #include "net/netstack.h"
 #include "net/packetbuf.h"
+#include "net/rime/rimestats.h"
 
 #include "netstack-aes.h"
 #include "aes-ccm.h"
@@ -139,7 +140,7 @@ netstack_aes_encrypt(void)
   ret = payload_len + AES_MICLEN;
 
   if(ret < 0) {
-    printf("Error: encryption failed, aborting send %i\n", ret);
+    printf("Error: encryption failed, aborting send %li\n", ret);
   } else {
     copy_packet(payload_tmp, (int)ret);
   }
@@ -196,7 +197,8 @@ netstack_aes_decrypt(void)
     memcpy(payload_tmp, payload_encrypted, HEADER_LENGTH);
 
     if(ret < 0) {
-      printf("Error: decryption failed, dropping packet %li\n", ret);
+      /*      printf("Error: decryption failed, dropping packet %li\n", ret);*/
+      RIMESTATS_ADD(decryptiondrops);
       payload_len = 0;
     } else {
       payload_len = HEADER_LENGTH + (int)ret;

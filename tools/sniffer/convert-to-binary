@@ -8,7 +8,7 @@ print @data;
 close(FILE);
 
 while(<>) {
-    if(/^PCAP (.*)$/) {
+    if(/^.*PCAP (.*)$/) {
 	$c = $1;
 	$c =~ y/A-Fa-f0-9//dc; 
 	$_= pack("H*", $c); 

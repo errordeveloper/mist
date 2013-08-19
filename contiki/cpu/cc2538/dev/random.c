@@ -60,7 +60,8 @@ random_rand(void)
   uint32_t rv;
 
   /* Clock the RNG LSFR once */
-  REG(SOC_ADC_ADCCON1) |= SOC_ADC_ADCCON1_RCTRL1;
+  REG(SOC_ADC_ADCCON1) &= ~SOC_ADC_ADCCON1_RCTRL1;
+  REG(SOC_ADC_ADCCON1) |= SOC_ADC_ADCCON1_RCTRL0;
 
   rv = REG(SOC_ADC_RNDL) | (REG(SOC_ADC_RNDH) << 8);
   return ((unsigned short)rv);

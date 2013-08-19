@@ -33,9 +33,6 @@
 /**
  * \file
  *         TI CC1101 driver
- * \author
- *         Adam Dunkels <adam@thingsquare.com>
- *         Fredrik Osterlind <fredrik@thingsquare.com>
  */
 
 #include "contiki.h"
@@ -242,12 +239,14 @@ static const unsigned char cc1101_register_config[CONF_REG_SIZE] = {
 static void reset(void);
 static uint8_t state(void);
 static unsigned char strobe(uint8_t strobe);
+#if 0
 static unsigned char single_read(uint8_t addr);
+#endif /* 0 */
 static uint8_t single_write(uint8_t addr, uint8_t value);
 static void burst_read(uint8_t addr, uint8_t *buffer,
-           uint8_t count);
+                       uint8_t count);
 static void burst_write(uint8_t addr, uint8_t *buffer,
-          uint8_t count);
+                        uint8_t count);
 static void pa_table_write(uint8_t pa_value);
 
 static void pollhandler(void);
@@ -269,9 +268,10 @@ static int pending_packet(void);
 static int channel_clear(void);
 static signed char rssi_dbm(unsigned char temp) ;
 signed char cc1101_read_rssi(void);
+#if 0
 static unsigned char read_lqi(void);
 static unsigned char channel_get(void);
-static void channel_set(unsigned char channel_number);
+#endif /* 0 */
 
 #define MIN(a,b) ((a)<(b)?(a):(b))
 
@@ -307,6 +307,7 @@ strobe(uint8_t strobe)
   return ret;
 }
 /*---------------------------------------------------------------------------*/
+#if 0
 static uint8_t
 single_read(uint8_t addr)
 {
@@ -328,6 +329,7 @@ single_read(uint8_t addr)
   RELEASE_SPI();
   return ret;
 }
+#endif /* 0 */
 /*---------------------------------------------------------------------------*/
 static uint8_t
 single_write(uint8_t addr, uint8_t value)
@@ -549,9 +551,9 @@ pollhandler(void)
     /* If we received a packet (or parts thereof) while processing the
        previous packet, we immediately pull it out from the RX
        FIFO. */
-/*        printf("[");*/
+    /*    printf("[");*/
     cc1101_rx_interrupt();
-/*        printf("]");*/
+    /*    printf("]");*/
     //    printf(")\n");
   } while(packet_rx_len > 0);
 }
@@ -559,8 +561,6 @@ pollhandler(void)
 static void
 flushrx(void)
 {
-  uint8_t b, rxbytes;
-
   restart_input();
 
   LOCK_SPI();
@@ -642,9 +642,9 @@ input_byte(uint8_t byte)
   rxstate.len = byte;
 
   if(byte == 0) {
-    #if DEBUG
+#if DEBUG
     printf("Bad len 0, state %d rxbytes %d\n", state(), read_rxbytes());
-    #endif /* DEBUG */
+#endif /* DEBUG */
     flushrx();
     PT_EXIT(&rxstate.pt);
   }
@@ -695,9 +695,9 @@ input_byte(uint8_t byte)
       frame802154_t info154;
       if(frame802154_parse(rxstate.buf, rxstate.len, &info154) != 0) {
 
-  /* XXX Potential optimization here: we could check if the
-    frame is destined for us, or for the broadcast address and
-    discard the packet if it isn't for us. */
+        /* XXX Potential optimization here: we could check if the
+           frame is destined for us, or for the broadcast address and
+           discard the packet if it isn't for us. */
   if(1) {
 
     /* For dataframes that has the ACK request bit set and that
@@ -722,7 +722,7 @@ input_byte(uint8_t byte)
       }
     }
     memcpy((void *)packet_rx, rxstate.buf,
-     rxstate.len + AUX_LEN);
+           rxstate.len + AUX_LEN);
     packet_rx_len = rxstate.len + AUX_LEN; /* including AUX */
 
     process_poll(&cc1101_process);
@@ -747,7 +747,7 @@ cc1101_rx_interrupt(void)
 {
   /* NB: This function may be called both from an rx interrupt and
      from cc1101_process */
-  uint8_t rxbytes, len, s;
+  uint8_t rxbytes, s;
 
   if(radio_on_or_off == OFF) {
     return 0;
@@ -764,6 +764,7 @@ cc1101_rx_interrupt(void)
     return 1;
   }
 
+  LOCK_SPI();
   s = state();
   if(s == CC1101_STATE_RXFIFO_OVERFLOW) {
     burst_read(CC1101_RXBYTES, &rxbytes, 1);
@@ -772,6 +773,7 @@ cc1101_rx_interrupt(void)
     printf("rxbytes 0x%02x\n", rxbytes);
 #endif /* DEBUG */
     flushrx();
+    RELEASE_SPI();
     return 0;
   }
   if(s == CC1101_STATE_TXFIFO_UNDERFLOW) {
@@ -780,6 +782,7 @@ cc1101_rx_interrupt(void)
 #endif /* DEBUG */
     strobe(CC1101_SFTX);
     strobe(CC1101_SRX);
+    RELEASE_SPI();
     return 0;
   }
 
@@ -788,6 +791,7 @@ cc1101_rx_interrupt(void)
     printf("Packet expired, flushing fifo\n");
 #endif /* DEBUG */
     flushrx();
+    RELEASE_SPI();
     return 0;
   }
 #define RX_OVERFLOW 0x80
@@ -803,14 +807,16 @@ cc1101_rx_interrupt(void)
     if(rxbytes & RX_OVERFLOW) {
 #if DEBUG
       printf("ovf\n");
+      leds_off(LEDS_GREEN;)
 #endif /* DEBUG */
       flushrx();
       process_poll(&cc1101_process);
-      leds_off(LEDS_GREEN);
+      RELEASE_SPI();
       return 1;
     }
 
     if(rxbytes == 0) {
+      RELEASE_SPI();
       return 0;
     }
     if(rxbytes >= 64) {
@@ -818,6 +824,7 @@ cc1101_rx_interrupt(void)
       printf("rxbytes too large %d\n", rxbytes);
 #endif /* DEBUG */
       flushrx();
+      RELEASE_SPI();
       return 0;
     }
 
@@ -831,15 +838,16 @@ cc1101_rx_interrupt(void)
       rxbytes = read_rxbytes();
     }
 
+    numbytes = 0;
     if(is_receiving()) {
       if(rxbytes < (rxstate.len + AUX_LEN) - rxstate.ptr) {
-  /* If the fifo contains only a part of the packet, we leave
-     one byte behind. */
-  numbytes = rxbytes - 1;
+        /* If the fifo contains only a part of the packet, we leave
+           one byte behind. */
+        numbytes = rxbytes - 1;
       } else {
-  /* If the full packet can be found in the fifo, we read it out
-     in full. */
-  numbytes = rxbytes;
+        /* If the full packet can be found in the fifo, we read it out
+           in full. */
+        numbytes = rxbytes;
       }
     }
 
@@ -849,12 +857,12 @@ cc1101_rx_interrupt(void)
     }
 
     rxbytes = read_rxbytes();
-  } while(rxbytes > 1);
+  } while(rxbytes > 1 && packet_rx_len == 0);
 
 #if DEBUG
   printf("-");
 #endif /* DEBUG */
-
+  RELEASE_SPI();
   return 1;
 }
 
@@ -1034,8 +1042,8 @@ on(void)
   ENERGEST_ON(ENERGEST_TYPE_LISTEN);
 #if DEBUG
   printf("(");
-#endif /* DEBUG */
   leds_on(LEDS_RED);
+#endif /* DEBUG */
   return 1;
 }
 /*---------------------------------------------------------------------------*/
@@ -1055,8 +1063,8 @@ off(void)
   RELEASE_SPI();
 
   ENERGEST_OFF(ENERGEST_TYPE_LISTEN);
-  leds_off(LEDS_RED);
 #if DEBUG
+  leds_off(LEDS_RED);
   printf(")");
 #endif /* DEBUG */
   return 1;
@@ -1078,8 +1086,8 @@ reset(void)
 #if DEBUG
   {
     uint8_t data;
-    uint8_t blajdata[] = {0, 1, 2, 3, 4, 5};
-    uint8_t blajdata_readback[6];
+    uint8_t dummydata[] = {0, 1, 2, 3, 4, 5};
+    uint8_t dummydata_readback[6];
     uint8_t i;
 
     burst_read(CC1101_VERSION, &data, 1);
@@ -1089,12 +1097,6 @@ reset(void)
     burst_read(CC1101_PKTLEN, &data, 1);
     printf("CC1101 DEBUG: Variable packet length up to %d\n", data);
 
-    /* 
-     * XXX these actually write to registers, corrupting the configuration made
-     * just above hence only enable these if the communication with the radio
-     * core needs testing.
-     */
-    #if 0
     single_write(0, 0x19);
     printf("CC1101 DEBUG: single write, read, should be 0x19 0x%02x\n", single_read(0));
     single_write(0, 0x25);
@@ -1103,15 +1105,22 @@ reset(void)
     printf("CC1101 DEBUG: single write, read, should be 0x33 0x%02x\n", single_read(0));
 
     printf("CC1101 DEBUG: testing burst write and read...\n");
-    burst_write(0, blajdata, 6);
-    burst_read(0, blajdata_readback, 6);
+    burst_write(0, dummydata, 6);
+    burst_read(0, dummydata_readback, 6);
     for(i = 0; i < 6; i += 1) {
-      if(blajdata_readback[i] != blajdata[i]) {
-        printf("Burst write/read failed on index %d; got %u expected %u\n", i, blajdata_readback[i], blajdata[i]);
+      if(dummydata_readback[i] != dummydata[i]) {
+        printf("Burst write/read failed on index %d; got %u expected %u\n",
+               i, dummydata_readback[i], dummydata[i]);
       }
     }
     printf("CC1101 DEBUG: ...done debug tests.\n");
-    #endif
+
+    strobe(CC1101_SRES);
+    strobe(CC1101_SNOP); /* XXX needed? */
+    burst_write(CC1101_IOCFG2, (unsigned char *)cc1101_register_config,
+      CONF_REG_SIZE);
+    pa_table_write(CC1101_PA_11);
+
   }
 #endif
 
@@ -1120,18 +1129,13 @@ reset(void)
   on();
 }
 /*---------------------------------------------------------------------------*/
+#if 0
 static uint8_t
 channel_get(void)
 {
   return single_read(CC1101_CHANNR);
 }
-/*---------------------------------------------------------------------------*/
-static void
-channel_set(uint8_t c)
-{
-  printf("c");
-  single_write(CC1101_CHANNR, c);
-}
+#endif /* 0 */
 /*---------------------------------------------------------------------------*/
 static signed char
 rssi_dbm(unsigned char raw_rssi)
@@ -1158,9 +1162,7 @@ cc1101_read_rssi(void)
   return rssi_dbm(raw);
 }
 /*---------------------------------------------------------------------------*/
-/**
- * rf1a read LQI
- */
+#if 0
 static unsigned char
 read_lqi(void)
 {
@@ -1169,6 +1171,7 @@ read_lqi(void)
   burst_read(CC1101_LQI, &temp, 1);
   return temp;
 }
+#endif /* 0 */
 /*---------------------------------------------------------------------------*/
 /**
  * cc1101 receiving packet function - check Radio SFD
@@ -1230,7 +1233,6 @@ static int
 channel_clear(void)
 {
   uint8_t cca, cca_bit, radio_was_off;
-  signed char rssi;
 
   if(SPI_IS_LOCKED()) {
     return 1;
@@ -1278,6 +1280,11 @@ channel_clear(void)
 static int
 init(void)
 {
+  static uint8_t initialized = 0;
+
+  if(initialized) {
+    return 0;
+  }
   cc1101_arch_init();
   reset();
 
@@ -1287,6 +1294,9 @@ init(void)
   cc1101_arch_interrupt_enable();
 
   printf("cc1101 init\n");
+  cc1101_channel_set(0);
+
+  initialized = 1;
   return 1;
 }
 /*---------------------------------------------------------------------------*/

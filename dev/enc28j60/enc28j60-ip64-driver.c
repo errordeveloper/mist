@@ -36,18 +36,35 @@
 #include "ip64.h"
 #include "ip64-eth.h"
 
+#include "net/rime.h"
+
 #include <string.h>
 
 PROCESS(enc28j60_ip64_driver_process, "ENC28J60 IP64 driver");
-
-static uint8_t macaddr[6] = { 16,2,3,4,5,6 };
 
 /*---------------------------------------------------------------------------*/
 static void
 init(void)
 {
+  uint8_t eui64[8];
+  uint8_t macaddr[6];
+
+  /* Assume that rimeaddr_node_addr holds the EUI64 of this device. */
+  memcpy(eui64, &rimeaddr_node_addr, sizeof(eui64));
+
+  /* Mangle the EUI64 into a 48-bit Ethernet address. */
+  memcpy(&macaddr[0], &eui64[0], 3);
+  memcpy(&macaddr[3], &eui64[5], 3);
+
+  /* In case the OUI happens to contain a broadcast bit, we mask that
+     out here. */
+  macaddr[0] = (macaddr[0] & 0xfe);
+
   memcpy(ip64_eth_addr.addr, macaddr, sizeof(macaddr));
 
+  printf("MAC addr %02x:%02x:%02x:%02x:%02x:%02x\n",
+         macaddr[0], macaddr[1], macaddr[2],
+         macaddr[3], macaddr[4], macaddr[5]);
   enc28j60_init(macaddr);
   process_start(&enc28j60_ip64_driver_process, NULL);
 }
@@ -61,11 +78,12 @@ output(uint8_t *packet, uint16_t len)
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(enc28j60_ip64_driver_process, ev, data)
 {
+  static int len;
+  static struct etimer e;
   PROCESS_BEGIN();
 
   while(1) {
-    int len;
-    process_poll(PROCESS_CURRENT());
+    etimer_set(&e, 1);
     PROCESS_WAIT_EVENT();
     len = enc28j60_read(ip64_packet_buffer, ip64_packet_buffer_maxlen);
     if(len > 0) {

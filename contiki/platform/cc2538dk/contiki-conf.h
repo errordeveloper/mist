@@ -170,10 +170,33 @@ typedef uint32_t rtimer_clock_t;
 #define NETSTACK_CONF_FRAMER  framer_802154
 #define NETSTACK_CONF_RADIO   cc2538_rf_driver
 /*---------------------------------------------------------------------------*/
-/* IEEE address configuration. Used to generate our RIME & IPv6 address */
-#ifndef IEEE_CONF_ADDR_LOCATION
-#define IEEE_CONF_ADDR_LOCATION  IEEE_ADDR_USE_HARDCODED
+/**
+ * \name IEEE address configuration
+ *
+ * Used to generate our RIME & IPv6 address
+ * @{
+ */
+/**
+ * \brief Location of the IEEE address
+ * 0 => Read from InfoPage,
+ * 1 => Use a hardcoded address, configured by IEEE_ADDR_CONF_ADDRESS
+ */
+#ifndef IEEE_ADDR_CONF_HARDCODED
+#define IEEE_ADDR_CONF_HARDCODED             0
 #endif
+
+#ifndef IEEE_ADDR_CONF_IN_FLASH
+#define IEEE_ADDR_CONF_IN_FLASH              0
+#endif
+
+/**
+ * \brief The hardcoded IEEE address to be used when IEEE_ADDR_CONF_HARDCODED
+ * is defined as 1
+ */
+#ifndef IEEE_ADDR_CONF_ADDRESS
+#define IEEE_ADDR_CONF_ADDRESS { 0x00, 0x12, 0x4B, 0x00, 0x89, 0xAB, 0xCD, 0xEF }
+#endif
+/** @} */
 /*---------------------------------------------------------------------------*/
 /* RF Config */
 // Defaults to 0xABCD in /net/mac/frame-802154.h
@@ -209,7 +232,7 @@ typedef uint32_t rtimer_clock_t;
 #ifndef UIP_CONF_TCP
 #define UIP_CONF_TCP                         1
 #endif
-#define UIP_CONF_TCP_MSS                    64
+#define UIP_CONF_TCP_MSS                    48
 #define UIP_CONF_UDP                         1
 #define UIP_CONF_UDP_CHECKSUMS               1
 #define UIP_CONF_ICMP6                       1
@@ -225,14 +248,14 @@ typedef uint32_t rtimer_clock_t;
 #define RPL_CONF_STATS                       0
 #define RPL_CONF_MAX_DAG_ENTRIES             1
 #ifndef RPL_CONF_OF
-#define RPL_CONF_OF rpl_of_etx
+#define RPL_CONF_OF rpl_mrhof
 #endif
 
 #define UIP_CONF_ND6_REACHABLE_TIME     600000
 #define UIP_CONF_ND6_RETRANS_TIMER       10000
 
-#ifndef UIP_CONF_DS6_NBR_NBU
-#define UIP_CONF_DS6_NBR_NBU                 4 /** Handle n Neighbors */
+#ifndef NBR_TABLE_CONF_MAX_NEIGHBORS
+#define NBR_TABLE_CONF_MAX_NEIGHBORS                20
 #endif
 #ifndef UIP_CONF_DS6_ROUTE_NBU
 #define UIP_CONF_DS6_ROUTE_NBU               4 /** Handle n Routes */
@@ -296,5 +319,6 @@ typedef uint32_t rtimer_clock_t;
 #ifdef PLATFORM_CONF
 #include PLATFORM_CONF
 #endif /* PLATFORM_CONF */
+
 
 #endif /* CONTIKI_CONF_H_ */

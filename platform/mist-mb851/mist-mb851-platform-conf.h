@@ -31,8 +31,8 @@
 #undef QUEUEBUF_CONF_REF_NUM
 #define QUEUEBUF_CONF_REF_NUM                   0
 
-#undef UIP_CONF_DS6_NBR_NBU
-#define UIP_CONF_DS6_NBR_NBU                    8
+#undef NBR_TABLE_CONF_MAX_NEIGHBORS
+#define NBR_TABLE_CONF_MAX_NEIGHBORS                    8
 
 #undef UIP_CONF_MAX_ROUTES
 #define UIP_CONF_MAX_ROUTES                     8

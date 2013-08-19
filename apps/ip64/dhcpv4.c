@@ -61,6 +61,12 @@ struct dhcp_msg {
   uint8_t options[312];
 };
 
+#if (UIP_BUFSIZE - UIP_UDPIP_HLEN) < 548
+#warning UIP_CONF_BUFFER_SIZE may be too small to accomodate DHCPv4 packets
+#warning Increase UIP_CONF_BUFFER_SIZE in your project-conf.h, platform-conf.h, or contiki-conf.h
+#warning A good size is 600 bytes
+#endif
+
 #define BOOTP_BROADCAST 0x8000
 
 #define DHCP_REQUEST        1
@@ -157,7 +163,7 @@ create_msg(CC_REGISTER_ARG struct dhcp_msg *m)
   memset(&m->chaddr[s.mac_len], 0, sizeof(m->chaddr) - s.mac_len);
 
   memset(m->sname, 0, sizeof(m->sname));
-  strcpy(m->sname, "Contiki");
+  strcpy((char *)m->sname, "Thingsquare Mist");
   memset(m->file, 0, sizeof(m->file));
 
 
